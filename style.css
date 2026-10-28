@@ -1,8 +1,36 @@
-html, body {
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden; /* never scroll, even mid-resize */
+  box-sizing: border-box;
+}
+
+* {
   margin: 0;
   padding: 0;
 }
 
 canvas {
   display: block;
+  /* override p5's inline px size: fill the window, then crop the overflowing
+  axis evenly so the scene stays centred */
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: cover;
+}
+
+.time-display {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  background-color: white;
+  padding: 1rem;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  font-variant-numeric: tabular-nums;
+  /* mix-blend-mode: difference; */
 }
