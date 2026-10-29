@@ -96,7 +96,7 @@ The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `
 
 - **Everything is a filled shape + a field of marks**, drawn sky first, then far → near.
 - **Perspective:** all ground placement goes through `lane(t, u)` (`t`: 0 = viewer's feet, 1 = vanishing point; `u`: 0 = left road edge, 1 = right; outside 0–1 = verges). It returns `{ x, y, s }`, where `s` scales mark size. Changing the composition means changing the vanishing point and road width — never scattering new coordinates.
-- **Mark kit:** use the shared marks rather than ad-hoc `line()` / `ellipse()` calls.
+- **Mark kit:** use the shared marks in `utils.js` rather than ad-hoc `line()` / `ellipse()` calls.
 
   | Mark     | Shape                         | For                                |
   | -------- | ----------------------------- | ---------------------------------- |
@@ -127,7 +127,7 @@ The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `
 | ------------ | -------------------------------------------------------------------- |
 | `config.js`  | Settings, palette keyframes, weather tints, stroke variation amounts |
 | `env.js`     | `TimeOfDay`, `Weather`, `Environment` (resolves palette + light)     |
-| `strokes.js` | StrokeField mark engine and shape samplers                           |
+| `utils.js`   | Shared helpers: `lane()` perspective, placement, mark kit, resizing  |
 | `scene.js`   | `Tree`, `Puddle`, `Scene` (static + live drawing passes)             |
 | `actors.js`  | Birds, ducks, petals, rain, reaction table                           |
 | `sketch.js`  | p5 entry point, render order, input handling                         |
