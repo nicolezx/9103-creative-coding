@@ -17,11 +17,11 @@ let seed = 11;
 
 // Perspective
 const perspective = {
-  horizon: 0.7, // horizon height as a fraction of canvas height
-  vanishingPointX: 0.5, // vanishing point x as a fraction of canvas width
-  roadHalfWidth: 0.2, // half the road width at the bottom edge, fraction of width
-  compression: 0.55, // how quickly things bunch up toward the horizon
-  curve: 0.1, // sideways bend of the far lane (-0.4 to 0.4)
+  horizon: 0.55, // horizon height as a fraction of canvas height
+  vanishingPointX: 0.55, // vanishing point x as a fraction of canvas width
+  roadHalfWidth: 0.25, // half the road width at the bottom edge, fraction of width
+  compression: 0.8, // how quickly things bunch up toward the horizon
+  curve: 0.0, // sideways bend of the far lane (-0.4 to 0.4)
 };
 
 // Placeholder colours (HSB). Replace with values sampled from the series,
@@ -103,16 +103,16 @@ function draw() {
   rect(0, vanishingPoint.y, width, height - vanishingPoint.y); // flat base coat under the verges
   drawRoad();
   drawGrass();
-  drawBushes(); // after the ground so it doesn't cover them, before the trees so they sit in front
+  // drawBushes(); // after the ground so it doesn't cover them, before the trees so they sit in front
   drawTrees();
 }
 
 function keyPressed() {
-  // if (key === "r" || key === "R") {
-  //   seed = floor(random(1, 10000));
-  // console.log(seed);
-  //   redraw();
-  // }
+  if (key === "r" || key === "R") {
+    // seed = floor(random(1, 10000));
+    // console.log(seed);
+    redraw();
+  }
   // if (key === "s" || key === "S") saveCanvas(`woldgate-${seed}`, "png");
 }
 
@@ -302,183 +302,13 @@ function drawGrass() {
 // Trees
 // ---------------------------------------------------------------------------
 
-// Recursive branch: returns a node tree (kept as data so it can sway later)
-function makeBranch(x, y, angle, length, weight, depth) {
-  const endX = x + cos(angle) * length;
-  const endY = y + sin(angle) * length;
-  const node = { x, y, endX, endY, weight, depth, length, children: [] };
-  if (depth > 0) {
-    const childCount = random([2, 2, 3]);
-    for (let i = 0; i < childCount; i++) {
-      const childAngle = lerp(angle + random(-0.65, 0.65), -HALF_PI, 0.18); // slight upward pull
-      node.children.push(
-        makeBranch(
-          endX,
-          endY,
-          childAngle,
-          length * random(0.62, 0.8),
-          weight * 0.62,
-          depth - 1,
-        ),
-      );
-    }
-  }
-  return node;
-}
-
-function makeTree(x, y, treeHeight, kind, side) {
-  const lean = (side < 0 ? 1 : -1) * random(0.05, 0.18); // lean toward the lane
-  const trunkLength = treeHeight * random(0.35, 0.45);
-  const trunkTop = {
-    x: x + cos(-HALF_PI + lean) * trunkLength,
-    y: y + sin(-HALF_PI + lean) * trunkLength,
-  };
-  const baseWidth = max(2, treeHeight * 0.05);
-  const branchLength = (treeHeight - trunkLength) / 2.4;
-  const branchDepth = treeHeight > 200 ? 5 : treeHeight > 90 ? 4 : 3;
-
-  const branches = [];
-  const crownBranchCount = random([2, 3]);
-  for (let i = 0; i < crownBranchCount; i++) {
-    branches.push(
-      makeBranch(
-        trunkTop.x,
-        trunkTop.y,
-        -HALF_PI + lean + random(-0.6, 0.6),
-        branchLength * random(0.8, 1.1),
-        baseWidth * 0.6,
-        branchDepth - 1,
-      ),
-    );
-  }
-  // one lower side branch off the trunk
-  const sideBranchHeight = random(0.55, 0.8);
-  branches.push(
-    makeBranch(
-      lerp(x, trunkTop.x, sideBranchHeight),
-      lerp(y, trunkTop.y, sideBranchHeight),
-      -HALF_PI + lean + random([-1, 1]) * random(0.6, 1.0),
-      branchLength * 0.7,
-      baseWidth * 0.45,
-      branchDepth - 2,
-    ),
-  );
-
-  return { x, y, trunkTop, baseWidth, branches, kind, height: treeHeight };
-}
-
-function drawTree(tree) {
-  const foliageColours =
-    tree.kind === "blossom"
-      ? [palette.blossom, palette.blossomLight]
-      : [palette.leaf, palette.leafLight];
-  const topWidth = tree.baseWidth * 0.6;
-
-  // trunk: tapered quad + bark dashes
-  noStroke();
-  fill(jitter(palette.trunk, 4, 6, 4));
-  quad(
-    tree.x - tree.baseWidth / 2,
-    tree.y,
-    tree.x + tree.baseWidth / 2,
-    tree.y,
-    tree.trunkTop.x + topWidth / 2,
-    tree.trunkTop.y,
-    tree.trunkTop.x - topWidth / 2,
-    tree.trunkTop.y,
-  );
-  for (let i = 0; i < tree.height * 0.4; i++) {
-    const heightFraction = random();
-    const barkX =
-      lerp(tree.x, tree.trunkTop.x, heightFraction) +
-      random(-0.4, 0.4) * lerp(tree.baseWidth, topWidth, heightFraction);
-    dash(
-      barkX,
-      lerp(tree.y, tree.trunkTop.y, heightFraction),
-      -HALF_PI + random(-0.1, 0.1),
-      (random(4, 10) * tree.baseWidth) / 10 + 2,
-      max(1, tree.baseWidth * 0.12),
-      jitter(palette.trunk, 8, 10, 14),
-    );
-  }
-
-  // branches, collecting the last two levels as foliage anchors
-  const foliageAnchors = [];
-  const drawBranch = (node) => {
-    stroke(jitter(palette.trunk, 6, 8, 8));
-    strokeWeight(max(0.6, node.weight));
-    line(node.x, node.y, node.endX, node.endY);
-    if (node.depth <= 1) foliageAnchors.push(node);
-    node.children.forEach(drawBranch);
-  };
-  tree.branches.forEach(drawBranch);
-
-  // leaf / blossom clusters: base pass then light pass
-  const sizeScale = min(1, tree.height / 400);
-  const marksPerAnchor = tree.kind === "blossom" ? 14 : 10;
-  for (const pass of [0, 1]) {
-    for (const anchor of foliageAnchors) {
-      for (let i = 0; i < marksPerAnchor; i++) {
-        const alongBranch = random(0.3, 1.1);
-        const markX =
-          lerp(anchor.x, anchor.endX, alongBranch) +
-          random(-1, 1) * anchor.length * 0.35;
-        const markY =
-          lerp(anchor.y, anchor.endY, alongBranch) +
-          random(-1, 1) * anchor.length * 0.35;
-        dash(
-          markX,
-          markY,
-          random(TWO_PI),
-          lerp(2, 12, sizeScale) * random(0.7, 1.3),
-          lerp(1.5, 5.5, sizeScale),
-          jitter(foliageColours[pass], 10, 12, 12, 0.92),
-        );
-      }
-    }
-  }
-}
-
-// Distance shortcut: trunk stroke + lumpy blob of marks
-function drawFarTree(tree) {
-  stroke(jitter(palette.trunk));
-  strokeWeight(max(1, tree.height * 0.04));
-  line(tree.x, tree.y, tree.x, tree.y - tree.height * 0.5);
-
-  const crownY = tree.y - tree.height * 0.62;
-  const crownRadiusX = tree.height * 0.32;
-  const crownRadiusY = tree.height * 0.38;
-  const crownColours =
-    tree.kind === "blossom"
-      ? [palette.blossom, palette.blossomLight]
-      : [palette.bush, palette.leaf];
-  for (let i = 0; i < tree.height * 4; i++) {
-    const angle = random(TWO_PI);
-    const radius = sqrt(random()); // sqrt spreads points evenly across the disc
-    const wobble = 0.8 + 0.4 * noise(cos(angle) + tree.x * 0.1, sin(angle));
-    dash(
-      tree.x + cos(angle) * radius * crownRadiusX * wobble,
-      crownY + sin(angle) * radius * crownRadiusY * wobble,
-      random(TWO_PI),
-      random(2, 5),
-      random(1.5, 3),
-      jitter(
-        i < tree.height * 2 ? crownColours[0] : crownColours[1],
-        10,
-        10,
-        12,
-      ),
-    );
-  }
-}
-
 function drawTrees() {
   const placements = [];
   const treeDistances = [0.04, 0.2, 0.38, 0.55, 0.7, 0.82, 0.9]; // `along` positions on the lane
 
   for (const side of [-1, 1]) {
     for (let i = 0; i < treeDistances.length; i++) {
-      const along = treeDistances[i] + random(-0.03, 0.03);
+      const along = treeDistances[i] + random(0);
       const across = side < 0 ? -0.12 - random(0.3) : 1.12 + random(0.3);
       const point = lane(along, across);
       const treeHeight = point.scale * height * random(0.85, 1.15);
@@ -491,94 +321,92 @@ function drawTrees() {
   placements.sort((a, b) => a.point.y - b.point.y); // far → near
   for (const placement of placements) {
     const { point, treeHeight, kind, side } = placement;
-    if (treeHeight < 70)
-      drawFarTree({ x: point.x, y: point.y, height: treeHeight, kind });
-    else drawTree(makeTree(point.x, point.y, treeHeight, kind, side));
+    new Tree(point.x, point.y, treeHeight, kind, side).draw();
   }
 }
 
 // ---------------------------------------------------------------------------
 // Bushes behind the treeline (same leaf-cluster marks as the tree crowns)
 // ---------------------------------------------------------------------------
-function drawBushes() {
-  randomSeed(seed + 1); // separate random stream for the bushes
+// function drawBushes() {
+//   randomSeed(seed + 1); // separate random stream for the bushes
 
-  const bushes = [];
-  for (const side of [-1, 1]) {
-    // tight spacing so each side reads as one continuous row, spanning the
-    // same stretch of lane as the trees (0.04 → 0.9)
-    for (let distance = 0.02; distance < 0.93; distance += 0.06) {
-      const along = distance + random(-0.02, 0.02);
-      // trees span across -0.12…-0.42 / 1.12…1.42, so start where they end
-      // to keep the bushes directly behind the tree row
-      const across = side < 0 ? -0.42 - random(0.15) : 1.42 + random(0.15);
-      const point = lane(along, across);
-      if (point.x < -width * 0.25 || point.x > width * 1.25) continue;
-      let size = point.scale * height * random(0.35, 0.55);
-      // 0 in the middle third of the screen → 1 at the edges; about half the
-      // bushes out there get scaled up so the sides are framed by bigger shrubs
-      const edgeness = constrain(
-        map(abs(point.x - width / 2), width * 0.3, width * 0.5, 0, 1),
-        0,
-        1,
-      );
-      if (random() < 0.5) size *= 1 + edgeness * random(0.4, 0.9);
-      bushes.push({ point, size });
-    }
-  }
+//   const bushes = [];
+//   for (const side of [-1, 1]) {
+//     // tight spacing so each side reads as one continuous row, spanning the
+//     // same stretch of lane as the trees (0.04 → 0.9)
+//     for (let distance = 0.02; distance < 0.93; distance += 0.06) {
+//       const along = distance + random(-0.02, 0.02);
+//       // trees span across -0.12…-0.42 / 1.12…1.42, so start where they end
+//       // to keep the bushes directly behind the tree row
+//       const across = side < 0 ? -0.42 - random(0.15) : 1.42 + random(0.15);
+//       const point = lane(along, across);
+//       if (point.x < -width * 0.25 || point.x > width * 1.25) continue;
+//       let size = point.scale * height * random(0.35, 0.55);
+//       // 0 in the middle third of the screen → 1 at the edges; about half the
+//       // bushes out there get scaled up so the sides are framed by bigger shrubs
+//       const edgeness = constrain(
+//         map(abs(point.x - width / 2), width * 0.3, width * 0.5, 0, 1),
+//         0,
+//         1,
+//       );
+//       if (random() < 0.5) size *= 1 + edgeness * random(0.4, 0.9);
+//       bushes.push({ point, size });
+//     }
+//   }
 
-  bushes.sort((a, b) => a.point.y - b.point.y); // far → near
-  for (const { point, size } of bushes) drawBush(point.x, point.y, size);
+//   bushes.sort((a, b) => a.point.y - b.point.y); // far → near
+//   for (const { point, size } of bushes) drawBush(point.x, point.y, size);
 
-  randomSeed(seed); // reset so the trees get exactly the same layout as before
-}
+//   randomSeed(seed); // reset so the trees get exactly the same layout as before
+// }
 
-function drawBush(x, y, bushHeight) {
-  // skeleton: 4–6 stems in a narrow fan, kept tight so each bush reads as
-  // one rounded mass rather than a spray of twigs
-  const stemCount = floor(random(4, 7));
-  const depth = bushHeight > 120 ? 3 : 2;
-  const anchors = [];
-  const collect = (node) => {
-    if (node.depth <= 1) anchors.push(node);
-    node.children.forEach(collect);
-  };
-  for (let i = 0; i < stemCount; i++) {
-    const spread = map(i, 0, stemCount - 1, -1, 1); // -1 = leftmost stem, 1 = rightmost
-    collect(
-      makeBranch(
-        x + (spread * 0.15 + random(-0.05, 0.05)) * bushHeight,
-        y,
-        -HALF_PI + spread * 0.5 + random(-0.1, 0.1),
-        bushHeight * random(0.3, 0.4),
-        1,
-        depth,
-      ),
-    );
-  }
+// function drawBush(x, y, bushHeight) {
+//   // skeleton: 4–6 stems in a narrow fan, kept tight so each bush reads as
+//   // one rounded mass rather than a spray of twigs
+//   const stemCount = floor(random(4, 7));
+//   const depth = bushHeight > 120 ? 3 : 2;
+//   const anchors = [];
+//   const collect = (node) => {
+//     if (node.depth <= 1) anchors.push(node);
+//     node.children.forEach(collect);
+//   };
+//   for (let i = 0; i < stemCount; i++) {
+//     const spread = map(i, 0, stemCount - 1, -1, 1); // -1 = leftmost stem, 1 = rightmost
+//     collect(
+//       makeBranch(
+//         x + (spread * 0.15 + random(-0.05, 0.05)) * bushHeight,
+//         y,
+//         -HALF_PI + spread * 0.5 + random(-0.1, 0.1),
+//         bushHeight * random(0.3, 0.4),
+//         1,
+//         depth,
+//       ),
+//     );
+//   }
 
-  // leaf clusters: three passes of the bush colour (same marks as the tree
-  // crowns); the wider jitter gives texture without bringing in other greens
-  const sizeScale = min(1, bushHeight / 400);
-  for (let pass = 0; pass < 3; pass++) {
-    for (const anchor of anchors) {
-      for (let i = 0; i < 8; i++) {
-        const alongBranch = random(0.3, 1.0);
-        // smaller scatter than the tree crowns (0.35) keeps the edges neat
-        dash(
-          lerp(anchor.x, anchor.endX, alongBranch) +
-            random(-1, 1) * anchor.length * 0.2,
-          lerp(anchor.y, anchor.endY, alongBranch) +
-            random(-1, 1) * anchor.length * 0.2,
-          random(TWO_PI),
-          lerp(2, 12, sizeScale) * random(0.7, 1.3),
-          lerp(1.5, 5.5, sizeScale),
-          jitter(palette.bush, 10, 10, 12),
-        );
-      }
-    }
-  }
-}
+//   // leaf clusters: three passes of the bush colour (same marks as the tree
+//   // crowns); the wider jitter gives texture without bringing in other greens
+//   const sizeScale = min(1, bushHeight / 400);
+//   for (let pass = 0; pass < 3; pass++) {
+//     for (const anchor of anchors) {
+//       for (let i = 0; i < 8; i++) {
+//         const alongBranch = random(0.3, 1.0);
+//         // smaller scatter than the tree crowns (0.35) keeps the edges neat
+//         dash(
+//           lerp(anchor.x, anchor.endX, alongBranch) +
+//             random(-1, 1) * anchor.length * 0.2,
+//           lerp(anchor.y, anchor.endY, alongBranch) +
+//             random(-1, 1) * anchor.length * 0.2,
+//           random(TWO_PI),
+//           lerp(2, 12, sizeScale) * random(0.7, 1.3),
+//           lerp(1.5, 5.5, sizeScale),
+//           jitter(palette.bush, 10, 10, 12),
+//         );
+//       }
+//     }
+//   }
+// }
 // ---------------------------------------------------------------------------
 // Resizing
 // CSS stretches the canvas instantly while the window is being resized; once
