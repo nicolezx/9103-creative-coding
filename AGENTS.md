@@ -105,13 +105,14 @@ The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `
   | Scribble | 3–5 noise-nudged points       | blossom, undergrowth, ragged edges |
 
 - **Trees:** generate branches recursively **once** with a fixed seed, keep the result as node data, and redraw from that data every frame. Sway/shake adds an angle per node, accumulating down the tree. Only the nearest 2–3 trees get full branching; far trees are a trunk stroke + a blob of leaf marks.
+- **Bushes:** overlapping `Bush` clumps along each verge (`bushes.js`), placed through `lane()` and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, so neighbours stay distinct, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with a few crisp dashes on top. Don't build bushes from branch skeletons. Like `Tree`, geometry and marks are generated once in the constructor and redrawn from that data.
 - **Randomness:** seed it (`randomSeed`, `noiseSeed`) so everyone sees the same scene when debugging.
 
 ### Render layers (bottom → top)
 
 | Layer      | Contents                                                                               | Redrawn                                                          |
 | ---------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Static     | sky, ground, shadows                                                                   | only when conditions change noticeably (cached `createGraphics`) |
+| Static     | sky, ground, bushes, shadows                                                           | only when conditions change noticeably (cached `createGraphics`) |
 | Puddle     | static + live layers mirrored about the horizon, clipped to the puddle, tint + ripples | every frame                                                      |
 | Live       | trunks, swaying canopies, creatures                                                    | every frame                                                      |
 | Rain       | drops, count follows `rain`                                                            | every frame                                                      |
@@ -128,6 +129,7 @@ The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `
 | `config.js`  | Settings, palette keyframes, weather tints, stroke variation amounts |
 | `env.js`     | `TimeOfDay`, `Weather`, `Environment` (resolves palette + light)     |
 | `utils.js`   | Shared helpers: `lane()` perspective, placement, mark kit, resizing  |
+| `bushes.js`  | `Bush` (one blurred undergrowth clump; placed in `sketch.js`)        |
 | `scene.js`   | `Tree`, `Puddle`, `Scene` (static + live drawing passes)             |
 | `actors.js`  | Birds, ducks, petals, rain, reaction table                           |
 | `sketch.js`  | p5 entry point, render order, input handling                         |

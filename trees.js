@@ -1,6 +1,6 @@
 class Tree {
   constructor(x, y, height, kind, side) {
-    this.far = height < 70;
+    // this.far = height < 70;
     this.x = x;
     this.y = y;
     this.height = height;
