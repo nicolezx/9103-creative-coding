@@ -15,30 +15,41 @@ const canvasHeight = 640;
 const markDensity = (canvasWidth * canvasHeight) / (480 * 640);
 let seed = 11;
 
+// Debug overlays (D toggles)
+const debug = {
+  treeLabels: true, // label each tree's trunk base with its side + `along` value
+};
+
 // Perspective
+// Ranges: [hard limits] are what the code can handle; "try" is what looks good.
 const perspective = {
-  horizon: 0.55, // horizon height as a fraction of canvas height
-  vanishingPointX: 0.5, // vanishing point x as a fraction of canvas width
-  roadHalfWidth: 0.35, // half the road width at the bottom edge, fraction of width
-  compression: 0.8, // how quickly things bunch up toward the horizon
-  curve: -0.08, // sideways bend of the far lane (-0.4 to 0.4)
+  horizon: 0.55, // horizon height as a fraction of canvas height [0–1, 0 = top]; try 0.4–0.7
+  vanishingPointX: 0.8, // vanishing point x as a fraction of canvas width; pans the whole scene left/right
+  //                        (lower = see more of the right verge, higher = more of the left) [0–1]; try 0.3–0.7
+  roadHalfWidth: 0.35, // half the road width at the bottom edge, fraction of width [> 0]; try 0.15–0.5
+  farHalfWidth: 8, // half the road width at the vanishing point, px [≥ 0, 0 = sharp point]; try 0–30
+  compression: 0.8, // how quickly things shrink toward the horizon [> 0, 1 = even]; try 0.5–1.5
+  //                   (< 1 = shrink sooner, > 1 = stay large longer then bunch at the horizon)
+  curve: -0.2, // sideways bend of the far lane, moves the vanishing point [any, 0 = straight]; try -0.4–0.4
+  zoom: 2, // crop scaled out from the vanishing point [> 0, 1 = none]; try 1–2
+  //            (< 1 leaves a gap below the road's near end)
 };
 
 // Undergrowth clumps (bushes.js)
 const bushSettings = {
-  baseAcross: 0.1, // nearest clump feet, in `across` units beyond each road edge
-  acrossSpread: 0.45, // how much further out from there clumps can sit
-  spacing: 0.05, // gap between rows of clumps, in `along` units
-  clumpsPerRow: 1, // overlapping clumps at each step, so the verge fills up
-  farAlong: 0.95, // how far toward the vanishing point clumps reach
-  sizeFactor: [0.5, 0.8], // clump height as a fraction of canvas height up close
-  lumpFrequency: 1.4, // how many lobes the outline wobbles into
-  lumpDepth: 0.22, // how far the lobes push in/out (0 = clean ellipse)
-  marksPerClump: 0, // dashes on a mid-sized clump
-  blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges)
+  baseAcross: 0.1, // nearest clump feet, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
+  acrossSpread: 0.45, // how much further out from there clumps can sit [≥ 0]; try 0–1
+  spacing: 0.05, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
+  clumpsPerRow: 1, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
+  farAlong: 0.95, // how far toward the vanishing point clumps reach [0–1, 1 = all the way]
+  sizeFactor: [0.5, 0.8], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
+  lumpFrequency: 1.4, // how many lobes the outline wobbles into [> 0, higher = more, smaller lobes]; try 0.5–3
+  lumpDepth: 0.22, // how far the lobes push in/out [0–1, 0 = clean ellipse]; try 0–0.4
+  marksPerClump: 0, // dashes on a mid-sized clump [whole number ≥ 0, 0 = none]; try 0–40
+  blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
-// Placeholder colours (HSB). Replace with values sampled from the series,
+// Placeholder colours (HSL). Replace with values sampled from the series,
 // and later with the shared time/weather palette.
 const paletteHsb = {
   skyTop: [197, 48, 82], // hsl(197, 48%, 82%)
@@ -69,11 +80,11 @@ let vanishingPoint;
 
 const hoursPerDay = 24;
 const secsPerMin = 60;
-const minsPerDay = 6; // real minutes one virtual day takes
+const minsPerDay = 6; // real minutes one virtual day takes [> 0]; try 1–10
 
 const clock = {
   dayLengthSeconds: minsPerDay * secsPerMin,
-  startHour: 0,
+  startHour: 0, // virtual hour the clock starts at [0–24, 0 = midnight]
 };
 
 // Real milliseconds per virtual minute (1440 minutes in a day)
@@ -111,7 +122,6 @@ function draw() {
   };
 
   drawSky();
-  // drawHedge();
   noStroke();
   fill(palette.grass);
   rect(0, vanishingPoint.y, width, height - vanishingPoint.y); // flat base coat under the verges
@@ -128,6 +138,10 @@ function keyPressed() {
     redraw();
   }
   // if (key === "s" || key === "S") saveCanvas(`woldgate-${seed}`, "png");
+  if (key === "d" || key === "D") {
+    debug.treeLabels = !debug.treeLabels;
+    redraw();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -318,17 +332,35 @@ function drawGrass() {
 
 function drawTrees() {
   const placements = [];
-  const treeDistances = [0.04, 0.2, 0.38, 0.55, 0.7, 0.82, 0.9]; // `along` positions on the lane
+  const leftTrees = [0.04, 0.2, 0.24, 0.38, 0.4, 0.55, 0.7, 0.82, 0.9]; // `along` positions on the lane
+  const rightTrees = [
+    0.02, 0.07, 0.18, 0.22, 0.35, 0.55, 0.7, 0.75, 0.77, 0.82, 0.85, 0.9, 0.91,
+    0.915, 0.94,
+  ]; // `along` positions on the lane
 
   for (const side of [-1, 1]) {
-    for (let i = 0; i < treeDistances.length; i++) {
-      const along = treeDistances[i] + random(0);
-      const across = side < 0 ? -0.12 - random(0.3) : 1.12 + random(0.3);
-      const point = lane(along, across);
-      const treeHeight = point.scale * height * random(0.85, 1.15);
-      const kind = "leaf";
-      if (point.x < -40 || point.x > width + 40) continue;
-      placements.push({ point, treeHeight, kind, side });
+    if (side === -1) {
+      for (let i = 0; i < leftTrees.length; i++) {
+        const along = leftTrees[i] + random(0);
+        const across = side < 0 ? -0.12 - random(0.1) : 1.12 + random(0.3);
+        const point = lane(along, across);
+        const treeHeight = point.scale * height * random(0.85, 1.15);
+        const kind = "leaf";
+        if (point.x < -40 || point.x > width + 40 || point.y > height + 40)
+          continue; // off-canvas (zoom pushes the nearest trees out of frame)
+        placements.push({ point, treeHeight, kind, side, along });
+      }
+    } else if (side === 1) {
+      for (let i = 0; i < rightTrees.length; i++) {
+        const along = rightTrees[i] + random(0);
+        const across = side < 0 ? -0.12 - random(0.3) : 1.12 + random(0.3);
+        const point = lane(along, across);
+        const treeHeight = point.scale * height * random(0.85, 1.15);
+        const kind = "leaf";
+        if (point.x < -40 || point.x > width + 40 || point.y > height + 40)
+          continue; // off-canvas (zoom pushes the nearest trees out of frame)
+        placements.push({ point, treeHeight, kind, side, along });
+      }
     }
   }
 
@@ -337,6 +369,28 @@ function drawTrees() {
     const { point, treeHeight, kind, side } = placement;
     new Tree(point.x, point.y, treeHeight, kind, side).draw();
   }
+
+  if (debug.treeLabels) drawTreeLabels(placements);
+}
+
+// Debug: label each trunk base with its side + `along` value, drawn after all
+// trees so nearer trees don't cover the labels of farther ones
+function drawTreeLabels(placements) {
+  push();
+  textSize(11);
+  textAlign(CENTER, BOTTOM);
+  for (const { point, side, along } of placements) {
+    const label = `${side < 0 ? "L" : "R"} ${along}`;
+    // keep labels on-canvas: some drawn trees have their base just past an edge
+    const x = constrain(point.x, 20, width - 20);
+    const y = constrain(point.y, 16, height - 4);
+    noStroke();
+    fill(0, 0, 0, 0.6);
+    rect(x - textWidth(label) / 2 - 3, y - 14, textWidth(label) + 6, 14, 3);
+    fill(0, 0, 100);
+    text(label, x, y - 1);
+  }
+  pop();
 }
 
 // ---------------------------------------------------------------------------

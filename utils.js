@@ -17,12 +17,20 @@ function marks(count) {
 function lane(along, across) {
   const scale = 1 - pow(along, perspective.compression);
   const y = lerp(vanishingPoint.y, height, scale);
-  const halfWidth = lerp(3, width * perspective.roadHalfWidth, scale);
-  const bend = perspective.curve * width * pow(1 - scale, 2);
-  return {
-    x: vanishingPoint.x + bend + (across - 0.5) * 2 * halfWidth,
-    y,
+  const halfWidth = lerp(
+    perspective.farHalfWidth,
+    width * perspective.roadHalfWidth,
     scale,
+  );
+  const bend = perspective.curve * width * pow(1 - scale, 1.8);
+  const x = vanishingPoint.x + bend + (across - 0.5) * 2 * halfWidth;
+  // Zoom = scale everything about the vanishing point, so the composition
+  // tightens without re-placing anything by hand
+  const zoom = perspective.zoom;
+  return {
+    x: vanishingPoint.x + (x - vanishingPoint.x) * zoom,
+    y: vanishingPoint.y + (y - vanishingPoint.y) * zoom,
+    scale: scale * zoom, // marks and tree heights grow with the zoom
   };
 }
 

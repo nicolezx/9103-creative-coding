@@ -179,7 +179,7 @@ class Tree {
     const foliageAnchors = [];
     const drawBranch = (node) => {
       // stroke(palette.trunk);
-      stroke(jitter(palette.trunk, 6, 8, 4));
+      stroke(palette.trunk);
       noFill();
       // taper: draw the curve in pieces, thinning down to the children's
       // starting weight (× 0.62, see makeBranch) so joints meet without a step
