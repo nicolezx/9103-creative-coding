@@ -128,13 +128,17 @@ function smoothstepT(t) {
 // Maps clock hours to PALETTE_KEYFRAMES indices (from colors.js):
 //   0 = Day, 1 = GoldenHour, 2 = Dusk, 3 = Night
 // Six stops at equal 4-hour intervals; dawn mirrors dusk symmetrically.
+// Night zone: 19 → 24 → 5 = 10 clock hours (~25 s of the 60-second cycle)
+// Day zone:    9 → 12 → 15 = 6 clock hours (~15 s of the 60-second cycle)
+// To rebalance, move the pre-dawn stop (hour 5) and evening stop (hour 19)
+// back toward 4 and 20 respectively.
 const _STOPS = [
   { hour:  0, idx: 3 }, // Midnight   → Night
-  { hour:  4, idx: 2 }, // Pre-dawn   → Dusk colours
-  { hour:  8, idx: 1 }, // Morning    → GoldenHour
+  { hour:  6, idx: 2 }, // Pre-dawn   → Dusk colours
+  { hour:  9, idx: 1 }, // Morning    → GoldenHour
   { hour: 12, idx: 0 }, // Noon       → Day
-  { hour: 16, idx: 1 }, // Afternoon  → GoldenHour
-  { hour: 20, idx: 2 }, // Evening    → Dusk
+  { hour: 15, idx: 1 }, // Afternoon  → GoldenHour
+  { hour: 18, idx: 2 }, // Evening    → Dusk
   { hour: 24, idx: 3 }, // (sentinel) → Night, wraps to hour 0
 ];
 
