@@ -80,11 +80,12 @@ let vanishingPoint;
 
 const hoursPerDay = 24;
 const secsPerMin = 60;
-const minsPerDay = 6; // real minutes one virtual day takes [> 0]; try 1–10
+const minsPerDay = 1; // real minutes for one virtual day (1 × 60 = 60 s)
+const FRAME_RATE = 8; // redraws per second — try 15–20 if profiling shows headroom
 
 const clock = {
-  dayLengthSeconds: minsPerDay * secsPerMin,
-  startHour: 0, // virtual hour the clock starts at [0–24, 0 = midnight]
+  dayLengthSeconds: minsPerDay * secsPerMin, // 120 s per virtual day
+  startHour: 12, // virtual clock starts at noon
 };
 
 // Real milliseconds per virtual minute (1440 minutes in a day)
@@ -110,12 +111,21 @@ function setup() {
   for (const name in paletteHsb) palette[name] = color(...paletteHsb[name]);
   strokeWeight(3);
   strokeCap(ROUND);
-  noLoop(); // static scene: only redraws when redraw() is called
+  frameRate(FRAME_RATE); // loop at a low rate — see FRAME_RATE near clock settings above
 }
 
 function draw() {
   randomSeed(seed);
   noiseSeed(seed);
+
+  // Update every palette entry for the current moment in the day-night cycle.
+  // ── WEATHER HOOK ──────────────────────────────────────────────────────────
+  // Weather mechanic: receive the palette object here and blend your tint in
+  // before it reaches the drawing code. Neither mechanic overwrites the other.
+  //   const tp = getTimePalette(); applyWeatherTint(tp); Object.assign(palette, tp);
+  // ──────────────────────────────────────────────────────────────────────────
+  Object.assign(palette, getTimePalette());
+
   vanishingPoint = {
     x: width * perspective.vanishingPointX,
     y: height * perspective.horizon,
@@ -142,6 +152,7 @@ function keyPressed() {
     debug.treeLabels = !debug.treeLabels;
     redraw();
   }
+  if (key === "t" || key === "T") useRealClock = !useRealClock; // toggle virtual ↔ real clock (AGENTS.md debug key)
 }
 
 // ---------------------------------------------------------------------------
