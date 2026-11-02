@@ -4,6 +4,28 @@ Shared context for everyone on the team **and** any AI coding agent (Claude Code
 
 > Claude Code users: add a `CLAUDE.md` containing just `@AGENTS.md` so it loads automatically.
 
+**Agents: keep this file current.** Whenever you make a structural change (new/renamed/moved files, public functions, data structures, colour pipeline, render order) or add a feature or debug key, update the relevant sections here **in the same change**, including §0 (status), §6 (files) and §8 (to-dos). Don't wait to be asked.
+
+---
+
+## 0. Current status
+
+What exists today vs. what the rest of this doc describes as the target design. Sections below are marked **(built)**, **(partial)** or **(planned)**.
+
+| Area                    | Status      | Where / notes                                                                                     |
+| ----------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| Base scene              | built       | `sketch.js`: sky gradient, road + tyre tracks, grass verges, flower dots, bushes, trees           |
+| Perspective (`lane()`)  | built       | `utils.js`; tuned via `perspective` in `sketch.js`                                                |
+| Trees                   | partial     | `trees.js` `Tree`: recursive bending branches. Rebuilt from the seed every frame (not stored); far-tree path disabled; no sway/shake yet |
+| Bushes                  | built       | `bushes.js` `Bush`, placed by `drawBushes()` in `sketch.js`                                       |
+| Time of day             | built       | `time.js`: 60 s virtual day (or real clock), 4 colour keyframes, pause                            |
+| Colour pipeline         | built       | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`    |
+| Weather simulation      | planned     | Only `weatherStub.rain` in `sketch.js` (W key cycles 0 / 0.5 / 1). No noise, rain drops, `moisture` or `temperature` yet |
+| Puddle                  | planned     |                                                                                                   |
+| Interaction / creatures | planned     | No click/hover handling, no `actors.js`                                                           |
+| Render layers / caching | planned     | Whole scene is redrawn every frame at `FRAME_RATE` (8 fps); no cached static layer                |
+| HUD                     | partial     | `index.html` + `style.css`: current time is live; Temperature / Conditions labels are placeholders |
+
 ---
 
 ## 1. What we're building
@@ -13,7 +35,7 @@ An interactive p5.js adaptation of David Hockney's _The Arrival of Spring in Wol
 Three layers sit on top of the base scene:
 
 1. **Weather** — Perlin noise drives rain and temperature. Rain builds up `moisture`, which feeds a reflective puddle that grows and slowly drains.
-2. **Time of day** — an automatic 24-hour cycle compressed into a fixed duration (default 60 s), controlling colour, light and visibility.
+2. **Time of day** — an automatic 24-hour cycle compressed into a fixed duration (currently 60 s), controlling colour, light and visibility.
 3. **Interaction** — clicking a tree shakes its branches and triggers an animation (birds, ducks, falling petals) chosen by current conditions.
 
 Weather and time must each work with the other switched off.
@@ -36,32 +58,36 @@ Pointer ──► Interaction ────────────────�
 - Interaction **bypasses** the Environment: it acts on scene objects directly (shake this tree, spawn these ducks) and reads `env` only to choose which reaction to play.
 - The **one deliberate cross-link**: daylight speeds up how fast `moisture` drains.
 
+**Today:** there is no `env.js` / `Environment` object yet. The meeting point is `resolvePalette()` in `time.js`, called once per frame from `draw()` in `sketch.js`; the scene reads only the resulting `palette.*` colours. Keep that separation when `env.js` arrives.
+
 If a change needs to break one of these rules, raise it with the team first. Don't quietly add a shortcut.
 
 ---
 
 ## 3. Layer reference
 
-### Weather (`env.js`)
+### Weather (planned — `env.js`)
 
-| Value         | Range | Drives                                                                |
-| ------------- | ----- | --------------------------------------------------------------------- |
-| `rain`        | 0 → 1 | Raindrop count, puddle ripples                                        |
-| `temperature` | TBD   | TBD — agree as a team what this drives                                |
-| `moisture`    | 0 → 1 | Puddle size, darker wet ground. Builds while raining, drains when dry |
+| Value         | Range | Drives                                                                       |
+| ------------- | ----- | ---------------------------------------------------------------------------- |
+| `rain`        | 0 → 1 | Raindrop count, puddle ripples, and the weather palette (dry → overcast → wet) |
+| `temperature` | TBD   | TBD — agree as a team what this drives                                       |
+| `moisture`    | 0 → 1 | Puddle size, darker wet ground. Builds while raining, drains when dry        |
 
 - `moisture` is the layer's memory: the puddle follows moisture, not rain, so it lingers after a shower.
-- **Removed:** clouds, mist (and wind, unless re-agreed). Don't reintroduce them without a team decision. Older docs that mention `cloud` or `wetness` are out of date — `wetness` was renamed to `moisture`.
+- **Today:** only `weatherStub = { rain }` exists in `sketch.js`, feeding `getWeatherOffset()`. Replace it with the real Weather layer; keep `rain = 0` meaning dry so the time cycle is unaffected when weather is off.
+- **Removed:** clouds, mist (and wind, unless re-agreed). Don't reintroduce them without a team decision. Older docs that mention `cloud` or `wetness` are out of date — `wetness` was renamed to `moisture`. (`palette.cloud` still exists as a derived sky tint but nothing draws clouds.)
 
-### Time of day (`env.js`)
+### Time of day (built — `time.js`)
 
-- `phase` runs 0 → 1 across the day: 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm. Advance by `deltaTime / dayLength` each frame, so pausing just freezes it.
-- Derived:
-  - `sunAltitude = sin((phase − 0.25) × TWO_PI)` → −1 at midnight, 1 at noon
-  - `daylight` → smoothed 0 → 1 with a soft twilight band
-  - `sunSide` → −1 (sun left, morning) to +1 (right, evening)
+- `getDayFraction()` returns 0 → 1 across the day (0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm). It's computed from `millis()` minus time spent paused, so pausing freezes it and resuming continues from the same moment. Day length and start hour live in `clock` in `sketch.js`.
+- `useRealClock` (T key) switches to the system wall clock.
+- `_STOPS` maps hours to colour keyframes: midnight → Night, 6:00 → Dusk, 9:00 → GoldenHour, noon → Day, then mirrored. Transitions are smoothstepped.
+- `getDaylight()` → 0 (night) to 1 (noon), from `_DAYLIGHT` per keyframe, eased the same way as the colours.
+- `getTimeOfDay()` formats the HUD clock.
+- **Planned:** `sunAltitude`, `sunSide` (−1 morning / +1 evening) for shadows and lighting.
 
-### Interaction (`actors.js`)
+### Interaction (planned — `actors.js`)
 
 - Click a tree → `shake()` sets an amplitude that decays over ~1 s. Hover → light rustle.
 - A **reaction table** decides what happens. First row whose condition passes and isn't cooling down wins:
@@ -77,38 +103,46 @@ If a change needs to break one of these rules, raise it with the team first. Don
 
 ---
 
-## 4. Colour & light
+## 4. Colour & light (built)
+
+**Colour format:** HSB everywhere. `setup()` sets `colorMode(HSB, 360, 100, 100, 1)` and `mixRGB()` restores exactly that after its RGB blend. Stored colours are plain `[h, s, b]` arrays (h 0–360, s/b 0–100) with a `// #RRGGBB` comment for editor previews — keep the comment in sync when editing a value. Blending happens in **OKLab** inside `time.js` (no hue-wraparound or grey midpoints); don't blend with `lerpColor` in HSB mode. p5 `color()` objects are only created at the last step.
 
 Colour is built in stages — never store a palette per weather × time combination:
 
-1. Time keyframes (night, dawn, noon, dusk) → blend the two nearest by `phase`
-2. Apply weather tints (rain, wet ground)
-3. Resolve one base colour per **element group**: `skyTop`, `skyHorizon`, `foliage`, `blossom`, `trunk`, `path`, `mud`, `verge`, `shadow`, `puddle`
-4. Each mark adds its own fixed **offset** (± hue/sat/brightness), chosen once at creation and never changed
+1. **Time:** `TIME_KEYFRAMES` (Day, GoldenHour, Dusk, Night) → blend the two nearest by time of day (`getTimeBase()`). The Day column _is_ the dry weather palette.
+2. **Weather:** `WEATHER_SETS` (dry, overcast, wet; one reference painting each, never mix roles across paintings) → blend by `rain`, take the difference from dry (`getWeatherOffset()`), and add it on top, scaled by daylight (the references are all daytime, so weather fades out at night).
+3. Resolve one base colour per **role** (`sky`, `bush`, `trunk`, `road`, `rut`, `grass`, `leaf`, `flower`), then expand into the named `palette.*` keys the drawing code uses (`skyTop`, `skyLow`, `grassDark`, `track`, `blossom`, …) with light/dark versions via OKLab lightness shifts (`resolvePalette()`).
+4. Marks add small per-mark variation with `jitter()` (± hue/sat/brightness). **Planned:** per-mark variant swatches — see the `VARIANTS` comments in `colors.js` and `resolvePalette()`.
 
-Marks store an _offset_, not a colour. That's what keeps texture stable while the whole field shifts with the light. Don't hard-code hex values in scene code — always go through the palette.
+Current data: `WEATHER_SETS` are sampled from paintings (dry = 31 May no. 2, overcast = 17 April, wet = 18 December). GoldenHour / Dusk / Night keyframes are invented placeholders (no night references exist in the series); the `leaf` row reuses grass colours outside Day.
 
-The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `sunAltitude`, `sunSide`.
+Don't hard-code colours in scene code — always go through `palette`.
+
+**Planned light object:** `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `sunAltitude`, `sunSide`. Today only `getDaylight()` exists.
 
 ---
 
 ## 5. Drawing conventions
 
-- **Everything is a filled shape + a field of marks**, drawn sky first, then far → near.
-- **Perspective:** all ground placement goes through `lane(t, u)` (`t`: 0 = viewer's feet, 1 = vanishing point; `u`: 0 = left road edge, 1 = right; outside 0–1 = verges). It returns `{ x, y, s }`, where `s` scales mark size. Changing the composition means changing the vanishing point and road width — never scattering new coordinates.
-- **Mark kit:** use the shared marks in `utils.js` rather than ad-hoc `line()` / `ellipse()` calls.
+- **Everything is a filled shape + a field of marks**, drawn sky first, then far → near. Current order in `draw()`: sky → ground base coat → road → grass → bushes → trees.
+- **Perspective:** all ground placement goes through `lane(along, across)` (`along`: 0 = viewer's feet, 1 = vanishing point; `across`: 0 = left road edge, 1 = right; outside 0–1 = verges). It returns `{ x, y, scale }`, where `scale` sizes marks. Changing the composition means changing the `perspective` settings (horizon, vanishing point, road width, compression, curve, zoom) — never scattering new coordinates.
+- **Mark counts:** wrap counts in `marks(n)` so density holds at any canvas size.
+- **Mark kit (`utils.js`):** use the shared marks rather than ad-hoc `line()` / `ellipse()` calls.
 
-  | Mark     | Shape                         | For                                |
-  | -------- | ----------------------------- | ---------------------------------- |
-  | Dash     | straight, round ends          | road, sky texture, bark            |
-  | Dab      | short, thick, slightly curved | leaves, grass accents              |
-  | Scribble | 3–5 noise-nudged points       | blossom, undergrowth, ragged edges |
+  | Mark     | Function  | Shape                          | For                     |
+  | -------- | --------- | ------------------------------ | ----------------------- |
+  | Dash     | `dash()`  | straight, round ends           | road, bark, bush marks  |
+  | Blade    | `blade()` | tapered, slightly bent stroke  | grass clumps            |
+  | Dab      | planned   | short, thick, slightly curved  | leaves, grass accents   |
+  | Scribble | planned   | 3–5 noise-nudged points        | blossom, ragged edges   |
 
-- **Trees:** generate branches recursively **once** with a fixed seed, keep the result as node data, and redraw from that data every frame. Sway/shake adds an angle per node, accumulating down the tree. Only the nearest 2–3 trees get full branching; far trees are a trunk stroke + a blob of leaf marks.
-- **Bushes:** overlapping `Bush` clumps along each verge (`bushes.js`), placed through `lane()` and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, so neighbours stay distinct, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with a few crisp dashes on top. Don't build bushes from branch skeletons. Like `Tree`, geometry and marks are generated once in the constructor and redrawn from that data.
-- **Randomness:** seed it (`randomSeed`, `noiseSeed`) so everyone sees the same scene when debugging.
+- **Trees (`trees.js`):** recursive branches with bezier bends, generated in the `Tree` constructor and drawn from that data. Placement comes from the `leftTrees` / `rightTrees` `along` lists in `drawTrees()`. **Target:** store the generated trees once (not rebuild per frame), add sway/shake as a per-node angle accumulating down the tree, and give only the nearest 2–3 trees full branching (`drawFar()` exists but `this.far` is currently disabled).
+- **Bushes (`bushes.js`):** overlapping `Bush` clumps along each verge, placed through `lane()` by `drawBushes()` (settings in `bushSettings`) and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with optional crisp dashes on top. Don't build bushes from branch skeletons.
+- **Randomness:** seeded (`randomSeed(seed)`, `noiseSeed(seed)` at the start of every `draw()`; bushes use `seed + 1`) so the layout is identical every frame and for everyone debugging.
 
-### Render layers (bottom → top)
+### Render layers (planned, bottom → top)
+
+Today everything is redrawn every frame at `FRAME_RATE`. Target:
 
 | Layer      | Contents                                                                               | Redrawn                                                          |
 | ---------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -124,47 +158,79 @@ The light object exposes: `ambient`, `shadowAlpha`, `starAlpha`, `visibility`, `
 
 ## 6. File structure
 
-| File         | Owns                                                                 |
-| ------------ | -------------------------------------------------------------------- |
-| `config.js`  | Settings, palette keyframes, weather tints, stroke variation amounts |
-| `env.js`     | `TimeOfDay`, `Weather`, `Environment` (resolves palette + light)     |
-| `utils.js`   | Shared helpers: `lane()` perspective, placement, mark kit, resizing  |
-| `bushes.js`  | `Bush` (one blurred undergrowth clump; placed in `sketch.js`)        |
-| `scene.js`   | `Tree`, `Puddle`, `Scene` (static + live drawing passes)             |
-| `actors.js`  | Birds, ducks, petals, rain, reaction table                           |
-| `sketch.js`  | p5 entry point, render order, input handling                         |
+Scripts are plain (non-module) `<script>` tags sharing globals; load order in `index.html` matters: `colors.js` → `time.js` → `utils.js` → `trees.js` → `bushes.js` → `sketch.js`.
 
-Tunable numbers (durations, thresholds, cooldowns, colours) belong in `config.js`, not inline.
+**Existing**
 
-**Debug keys:** `t` toggles time · `w` toggles weather · `d` toggles the debug readout.
+| File          | Owns                                                                                          |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `colors.js`   | Colour data as `[h, s, b]`: `WEATHER_SETS`, `TIME_KEYFRAMES`                                  |
+| `time.js`     | Clock + pause, OKLab blending, keyframe schedule, `getDaylight()`, `getWeatherOffset()`, `resolvePalette()` |
+| `utils.js`    | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`), `jitter`, `mixRGB`, `sharpDensity` |
+| `trees.js`    | `Tree` (recursive bending branches) + bezier helpers                                          |
+| `bushes.js`   | `Bush` (one blurred undergrowth clump)                                                        |
+| `sketch.js`   | p5 entry point, settings (`perspective`, `bushSettings`, `clock`, `FRAME_RATE`), draw order, scene passes, `weatherStub`, input |
+| `index.html`  | Script order + HUD markup (time / temperature / conditions)                                   |
+| `style.css`   | Canvas scaling (cover the window) + HUD styling                                               |
+| `assets/`     | Reference image(s) from the series                                                            |
+| `scripts/`    | Old experiments (`set-up.js`, `user-input.js`), commented out in `index.html` — not used      |
+| `TODO.md`     | Per-layer task list                                                                           |
+
+**Planned**
+
+| File         | Will own                                                              |
+| ------------ | --------------------------------------------------------------------- |
+| `config.js`  | Tunable settings currently at the top of `sketch.js` + colour data    |
+| `env.js`     | `TimeOfDay`, `Weather`, `Environment` (resolves palette + light)      |
+| `actors.js`  | Birds, ducks, petals, rain, reaction table                            |
+| `scene.js`   | `Puddle`, static/live drawing passes                                  |
+
+Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings object (`config.js` once it exists), not inline. Annotate them with `[hard limits]` and a "try" range, like `perspective` in `sketch.js`.
+
+**Keys:**
+
+| Key | Action                                                                  |
+| --- | ----------------------------------------------------------------------- |
+| `t` | Toggle virtual ↔ real (wall) clock                                      |
+| `p` | Pause / resume the clock                                                |
+| `w` | Cycle `weatherStub.rain` 0 → 0.5 → 1 (temporary, until the Weather layer exists) |
+| `d` | Toggle debug tree labels (side + `along` value at each trunk)            |
+| `r` | Redraw                                                                  |
 
 ---
 
 ## 7. Working together
 
 - **Team:** _add names + who owns which layer/file_
-- **Repo / branch:** _add repo URL and branching convention (e.g. `feature/<layer>-<thing>`)_
-- **Running locally:** _e.g. VS Code Live Server, or `npx serve .`_
+- **Repo / branch:** https://github.com/nicolezx/9103-creative-coding — `main` plus personal branches (e.g. `nicole`). _Add branching convention._
+- **Running locally:** VS Code Live Server (or `npx serve .`); scripts load over `http://`, not `file://`.
 - **Deadline / milestones:** _add_
 - **Design source of truth:** project Notion page "Arrival of Spring Generative Artwork". If code and Notion disagree, flag it in the group chat rather than guessing.
 
 ### Ground rules for humans and agents
 
-- Keep each change inside one layer where possible; touching `env.js` affects everyone, so mention it.
+- Keep each change inside one layer where possible; touching shared files (`utils.js`, `time.js`, `colors.js`, later `env.js`) affects everyone, so mention it.
 - Before adding a new variable to `env`, check whether an existing one already covers it.
 - Comment the _why_ on anything non-obvious (thresholds, magic curves) — this is assessed work and markers will read it.
 - Don't add libraries beyond p5.js (and p5.brush on the static layer) without agreement.
 - Agents: don't restructure files, rename public functions, or reintroduce removed weather features unprompted. Ask first.
-- Check performance with the debug readout before merging anything that runs every frame.
+- Agents: update this file in the same change as any structural change or new feature (see the note at the top).
+- Check performance before merging anything that runs every frame (the whole scene currently redraws at `FRAME_RATE`).
 
 ---
 
 ## 8. Open to-dos
 
-- [ ] Sample real colours from the series into the night / dawn / noon / dusk keyframes (current hex values are placeholders)
-- [ ] Decide what `temperature` drives
+- [x] Wire the draft scene's colours into the shared palette (`resolvePalette()`)
+- [x] Sample daytime palettes for dry / overcast / wet from the series
+- [ ] Tune the invented GoldenHour / Dusk / Night keyframes (no night references exist)
+- [ ] Give `leaf` its own non-Day keyframes (currently copies grass)
+- [ ] Build the Weather layer: noise-driven `rain`, `moisture`, rain drops; replace `weatherStub`
+- [ ] Decide what `temperature` drives; wire the HUD Temperature / Conditions labels
 - [ ] Set the composition: vanishing point, road width, tree placement
-- [ ] Store tree branch data and redraw per frame for sway and shake
-- [ ] Wire the draft scene's colours into the shared palette
-- [ ] Add a night reaction (owl or bats)
-- [ ] Add a muddy rim around the puddle and stretch it along the lane
+- [ ] Store tree branch data once and redraw per frame for sway and shake; re-enable far trees
+- [ ] Cache the static layer instead of redrawing the whole scene every frame
+- [ ] Per-mark variant swatches (`VARIANTS` hooks in `colors.js` / `time.js`)
+- [ ] Interaction: tree click/hover, reaction table, creatures; add a night reaction (owl or bats)
+- [ ] Puddle, with a muddy rim, stretched along the lane
+- [ ] Move settings + colour data into `config.js`

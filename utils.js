@@ -88,7 +88,7 @@ function jitter(
 function mixRGB(fromColour, toColour, amount) {
   colorMode(RGB, 255);
   const mixed = lerpColor(fromColour, toColour, amount);
-  colorMode(HSB, 360, 100, 100, 1);
+  colorMode(HSB, 360, 100, 100, 1); // back to the sketch-wide mode set in setup()
   return mixed;
 }
 

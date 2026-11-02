@@ -49,29 +49,12 @@ const bushSettings = {
   blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
-// Placeholder colours (HSL). Replace with values sampled from the series,
-// and later with the shared time/weather palette.
-const paletteHsb = {
-  skyTop: [197, 48, 82], // hsl(197, 48%, 82%)
-  skyLow: [197, 48, 82], // hsl(197, 48%, 82%)
-  cloud: [220, 4, 100], // hsl(220, 4%, 100%)
-  bush: [118, 41, 44], // hsl(118, 41%, 44%)
-  road: [30, 20, 80], // hsl(30, 20%, 80%)
-  track: [22, 38, 58], // hsl(22, 38%, 58%)
-  ridge: [70, 30, 72], // hsl(70, 30%, 72%)
-  grass: [98, 62, 58], // hsl(98, 62%, 58%)
-  grassDark: [125, 70, 34], // hsl(125, 70%, 34%)
-  grassLight: [80, 55, 84], // hsl(80, 55%, 84%)
-  trunk: [18, 40, 34], // hsl(18, 40%, 34%)
-  leaf: [108, 62, 58], // hsl(108, 62%, 58%)
-  leafLight: [88, 55, 82], // hsl(88, 55%, 82%)
-  blossom: [272, 45, 68], // hsl(272, 45%, 68%)
-  blossomLight: [288, 28, 90], // hsl(288, 28%, 90%)
-  flowerYellow: [52, 65, 100], // hsl(52, 65%, 100%)
-  flowerWhite: [0, 0, 100], // hsl(0, 0%, 100%)
-};
-
+// Filled every frame by resolvePalette() (time.js) from colors.js data.
 const palette = {};
+
+// Temporary stand-in for the Weather layer: `rain` 0–1 picks the weather
+// palette (0 = dry, 0.5 = overcast, 1 = wet). W cycles it for testing.
+const weatherStub = { rain: 0 };
 let vanishingPoint;
 
 // ---------------------------------------------------------------------------
@@ -107,8 +90,7 @@ function setup() {
   }
   createCanvas(canvasWidth, canvasHeight);
   pixelDensity(sharpDensity());
-  colorMode(HSL);
-  for (const name in paletteHsb) palette[name] = color(...paletteHsb[name]);
+  colorMode(HSB, 360, 100, 100, 1); // HSB everywhere; mixRGB() restores this exact mode
   strokeWeight(3);
   strokeCap(ROUND);
   frameRate(FRAME_RATE); // loop at a low rate — see FRAME_RATE near clock settings above
@@ -118,13 +100,17 @@ function draw() {
   randomSeed(seed);
   noiseSeed(seed);
 
-  // Update every palette entry for the current moment in the day-night cycle.
-  // ── WEATHER HOOK ──────────────────────────────────────────────────────────
-  // Weather mechanic: receive the palette object here and blend your tint in
-  // before it reaches the drawing code. Neither mechanic overwrites the other.
-  //   const tp = getTimePalette(); applyWeatherTint(tp); Object.assign(palette, tp);
-  // ──────────────────────────────────────────────────────────────────────────
-  Object.assign(palette, getTimePalette());
+  // Update every palette entry for the current time of day and weather.
+  // Time and weather only meet here (AGENTS.md §2): either works with the
+  // other switched off (rain = 0 → no weather offset).
+  Object.assign(
+    palette,
+    resolvePalette(
+      getTimeBase(),
+      getWeatherOffset(weatherStub.rain),
+      getDaylight(),
+    ),
+  );
 
   vanishingPoint = {
     x: width * perspective.vanishingPointX,
@@ -152,7 +138,12 @@ function keyPressed() {
     debug.treeLabels = !debug.treeLabels;
     redraw();
   }
+  if (key === "w" || key === "W") {
+    // cycle dry → overcast → wet (temporary until the Weather layer exists)
+    weatherStub.rain = (weatherStub.rain + 0.5) % 1.5;
+  }
   if (key === "t" || key === "T") useRealClock = !useRealClock; // toggle virtual ↔ real clock (AGENTS.md debug key)
+  if (key === "p" || key === "P") togglePause(); // freeze / resume the time of day
 }
 
 // ---------------------------------------------------------------------------

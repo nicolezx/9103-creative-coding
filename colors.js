@@ -1,31 +1,123 @@
-// ── PALETTE KEYFRAMES ──────────────────────────────────────────────────────────
+// ── PALETTE DATA ───────────────────────────────────────────────────────────────
 //
-// ██████████████████████████████████████████████████████████████████████████████
-// ██  PLACEHOLDERS — every hex value below is a rough stand-in.               ██
-// ██  Replace with colours sampled from the Hockney Woldgate series before    ██
-// ██  final submission. To swap colours: edit the hex strings only.           ██
-// ██  All palette logic lives in time.js; nothing else needs to change.       ██
-// ██████████████████████████████████████████████████████████████████████████████
+// Every colour is [hue 0–360, saturation 0–100, brightness 0–100] (HSB), kept as
+// plain numbers so channels can be read/shifted before p5's color() is called.
+// Blending happens in OKLab inside time.js; these arrays are storage only.
 //
-// Array order for every role: [Day, GoldenHour, Dusk, Night]
-//   Day        = 12:00 noon
-//   GoldenHour = 08:00 morning / 16:00 afternoon
-//   Dusk       = 04:00 pre-dawn / 20:00 evening
-//   Night      = 00:00 midnight
+// Roles (same keys in every structure below):
+//   sky, bush, trunk, road, rut, grass, leaf, flower
+//
+// How the two structures combine (see time.js):
+//   1. TIME_KEYFRAMES are blended by time of day.
+//   2. The selected weather set's difference from `dry` is added on top,
+//      faded out at night because the reference paintings are all daytime.
+//   No palette is stored per weather × time combination (AGENTS.md §4).
 //
 // TODO: migrate to config.js once that file exists (see AGENTS.md §6).
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Nicole's reference sky values (kept for comparison — do not delete):
-// '#effcad'  '#9ed0c1'  '#B7B2CC'
+// One base palette per weather condition, each sampled from a single painting
+// so its colours stay a coherent set (never mix roles across paintings).
+// `rain` 0 → 1 runs dry → overcast → wet (stops in time.js).
+const WEATHER_SETS = {
+  dry: {
+    source: "31-may-no-2", // painting title/date sampled from
+    base: {
+      sky: [195, 22.9, 96.1], // #BDE7F5
+      bush: [90, 69.5, 75.7], // #7EC13B
+      trunk: [2.6, 45, 80], // #CC7470
+      road: [321.6, 10.1, 96.9], // #F7DEEE
+      rut: [318.8, 47.9, 83.5], // #D56FB5
+      grass: [98.9, 64.4, 78], // #74C747
+      leaf: [143.3, 89.1, 64.7], // #12A54B
+      flower: [61.1, 21.6, 98.4], // #FAFBC5
+    },
+  },
+  overcast: {
+    source: "17-april",
+    base: {
+      sky: [242.7, 9.5, 90.6], // #D2D1E7
+      bush: [151, 91, 39.3], // #096438
+      trunk: [58.5, 29.5, 54.5], // #8B8A62
+      road: [56, 7.3, 81.1], // #CFCEC0
+      rut: [58.5, 20.3, 75.2], // #C0BF99
+      grass: [133.2, 79.2, 71.7], // #26B746
+      leaf: [72.2, 98.6, 85.8], // #AFDB03
+      flower: [60, 16.9, 92.9], // #EDEDC5
+    },
+  },
+  wet: {
+    source: "18-december",
+    base: {
+      sky: [12, 2.2, 89.8], // #E5E1E0
+      bush: [108, 20.6, 28.7], // #3D493A
+      trunk: [19.7, 59.4, 46.2], // #764730
+      road: [19, 36.6, 43.9], // #705447
+      rut: [24.3, 39.4, 36.9], // #5E4839
+      grass: [126.9, 47.3, 50.6], // #44814B
+      leaf: [117, 43.5, 54.2], // #518A4E
+      flower: [61.4, 18.9, 91.4], // #E8E9BD
+    },
+  },
+  // VARIANTS (later): add `variants: { role: [[h, s, b], ...] }` beside `base`
+  // in each set. Use the same count per role in every set, sorted light → dark,
+  // so a mark's chosen index means the same thing in every condition.
+};
 
-const PALETTE_KEYFRAMES = {
-  //              Day          GoldenHour   Dusk         Night
-  sky:     [ '#C9DDE6',    '#E8D8A8',   '#F2A86B',   '#1E2350' ],
-  hills:   [ '#6E9B5E',    '#7E9850',   '#6B7A4A',   '#1F3A3A' ],
-  trunks:  [ '#7A4B3A',    '#6E4530',   '#5A3020',   '#2A1E2E' ],
-  road:    [ '#D9C2B0',    '#E0BC98',   '#D99A70',   '#4A4560' ],
-  ruts:    [ '#A86A52',    '#A0603E',   '#8A4A30',   '#302A40' ],
-  grass:   [ '#8FD04A',    '#A8C848',   '#9AA040',   '#2A5A3A' ],
-  flowers: [ '#1F3BE0',    '#3A3CC8',   '#6A3A9A',   '#3A40A0' ],
+// Array order for every role: [Day, GoldenHour, Dusk, Night]
+//   Day        = 12:00 noon (taken from the dry painting, the daytime baseline)
+//   GoldenHour = 09:00 morning / 15:00 afternoon
+//   Dusk       = 06:00 pre-dawn / 18:00 evening
+//   Night      = 00:00 midnight
+// Only Day has reference colours; the other three are invented.
+const _dry = WEATHER_SETS.dry.base; // short alias for the Day column below
+const TIME_KEYFRAMES = {
+  sky: [
+    _dry.sky, // #BDE7F5 Day
+    [45, 27.6, 91], // #E8D8A8 GoldenHour
+    [27.1, 55.9, 94.9], // #F2A86B Dusk
+    [234, 62.5, 31.4], // #1E2350 Night
+  ],
+  bush: [
+    _dry.bush, // #7EC13B Day
+    [81.7, 47.3, 59.6], // #7E9850 GoldenHour
+    [78.8, 39.4, 47.8], // #6B7A4A Dusk
+    [180, 46.5, 22.8], // #1F3A3A Night
+  ],
+  trunk: [
+    _dry.trunk, // #CC7470 Day
+    [20.3, 56.3, 43.2], // #6E4530 GoldenHour
+    [16.6, 64.4, 35.3], // #5A3020 Dusk
+    [285, 34.8, 18], // #2A1E2E Night
+  ],
+  road: [
+    _dry.road, // #F7DEEE Day
+    [30, 32.2, 87.8], // #E0BC98 GoldenHour
+    [24, 48.4, 85.1], // #D99A70 Dusk
+    [251.1, 28.2, 37.7], // #4A4560 Night
+  ],
+  rut: [
+    _dry.rut, // #D56FB5 Day
+    [20.8, 61.2, 62.7], // #A0603E GoldenHour
+    [17.3, 65.2, 54.2], // #8A4A30 Dusk
+    [256.4, 34.4, 25.1], // #302A40 Night
+  ],
+  grass: [
+    _dry.grass, // #74C747 Day
+    [75, 64.1, 78.4], // #A8C848 GoldenHour
+    [63.8, 60, 62.7], // #9AA040 Dusk
+    [140, 53.4, 35.3], // #2A5A3A Night
+  ],
+  leaf: [
+    _dry.leaf, // #12A54B Day
+    [75, 64.1, 78.4], // #A8C848 GoldenHour
+    [63.8, 60, 62.7], // #9AA040 Dusk
+    [140, 53.4, 35.3], // #2A5A3A Night
+  ],
+  flower: [
+    _dry.flower, // #FAFBC5 Day
+    [239.2, 70.9, 78.4], // #3A3CC8 GoldenHour
+    [270, 62.4, 60.4], // #6A3A9A Dusk
+    [236.5, 63.8, 62.7], // #3A40A0 Night
+  ],
 };
