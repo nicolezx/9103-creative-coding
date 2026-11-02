@@ -22,27 +22,34 @@ canvas {
   object-fit: cover;
 }
 
+.time-inner {
+  display: flex;
+  justify-content: space-between;
+  /* flex-direction: column; */
+  font-variant-numeric: tabular-nums;
+  padding: 1rem;
+}
+
 .time-display {
   position: absolute;
-  bottom: 0.5rem;
-  left: 0.5rem;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  padding: 0.5rem;
   pointer-events: none;
   z-index: 1;
-  color: rgb(30, 29, 29);
-  background-color: rgba(255 255 255 / 0.3);
+  color: rgb(243, 243, 243);
+  /* background-color: rgba(255 255 255 / 0.3); */
   backdrop-filter: blur(6px);
-  padding: 1rem;
-  padding-right: 3rem;
+  /* padding-right: 3rem; */
   /* min-width: 240px; */
-  display: flex;
-  flex-direction: column;
-  font-variant-numeric: tabular-nums;
   /* mix-blend-mode: hue; */
 }
 
 div.label-group {
-  display: flex;
-  gap: 0.25rem;
+  flex: 1;
+  /* display: flex; */
+  /* gap: 0.25rem; */
 }
 
 .hud-label {
