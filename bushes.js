@@ -1,6 +1,6 @@
 // One undergrowth clump: a solid, softly blurred organic blob with a few
 // crisp marks on top. Many overlapping clumps line each side of the lane
-// (see drawBushes in sketch.js); each gets a slightly different shade so
+// (see buildBushes in sketch.js); each gets a slightly different shade so
 // neighbours stay distinct where they overlap.
 class Bush {
   constructor(x, y, size) {
@@ -64,9 +64,25 @@ class Bush {
     }
   }
 
-  draw() {
+  // Box everything this clump draws fits in: outline, padded for the blur
+  // and for marks pushed outward by the hover (user-input.js)
+  get bounds() {
+    if (!this._bounds) {
+      const pad = this.size * bushSettings.markLength * 2 + this.blur * 3;
+      const xs = this.outline.map((p) => p.x);
+      const ys = this.outline.map((p) => p.y);
+      const minX = min(xs) - pad;
+      const minY = min(ys) - pad;
+      this._bounds = { x: minX, y: minY, w: max(xs) + pad - minX, h: max(ys) + pad - minY };
+    }
+    return this._bounds;
+  }
+
+  // `area` (optional { x, y, w, h }): only draw marks inside it, for
+  // partial redraws (redrawArea in sketch.js)
+  draw(area) {
     this.drawMass();
-    this.drawMarks();
+    this.drawMarks(area);
   }
 
   // Native canvas blur on just this fill: p5's filter(BLUR) would blur the
@@ -81,8 +97,11 @@ class Bush {
     drawingContext.filter = "none";
   }
 
-  drawMarks() {
-    for (const mark of this.marks) {
+  drawMarks(area) {
+    for (const stored of this.marks) {
+      if (area && !markInArea(stored, area)) continue;
+      // hover: marks near the cursor are pushed/lightened (user-input.js)
+      const mark = hoverTouch(stored, "bush");
       if (mark.bend === 0) {
         dash(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour);
       } else {

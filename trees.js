@@ -108,10 +108,15 @@ class Tree {
     }
     return node;
   }
-  draw() {
-    this.far ? this.drawFar() : this.drawFull();
+  // `area` (optional { x, y, w, h }): only draw leaf marks inside it, for
+  // partial redraws (redrawArea in sketch.js)
+  draw(area) {
+    if (this.far) return this.drawFar();
+    this.drawWood();
+    this.drawLeaves(area);
   }
-  drawFull() {
+  // trunk + branches
+  drawWood() {
     const topWidth = this.baseWidth * 0.6;
 
     // trunk: tapered shape with curved sides + bark dashes
@@ -171,10 +176,8 @@ class Tree {
     //   );
     // }
 
-    // branches, collecting the last two levels as foliage anchors
-    const foliageAnchors = [];
+    // branches
     const drawBranch = (node) => {
-      // stroke(palette.trunk);
       stroke(palette.trunk);
       noFill();
       // taper: draw the curve in pieces, thinning down to the children's
@@ -196,19 +199,40 @@ class Tree {
         bezierVertex(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
         endShape();
       });
-      if (node.depth <= 1) foliageAnchors.push(node);
       node.children.forEach(drawBranch);
     };
     this.branches.forEach(drawBranch);
-
-    // leaf / blossom clumps around the outer branches
-    this.drawFoliage(foliageAnchors);
+  }
+  // Leaf / blossom marks (generated once in buildFoliage), optionally only
+  // those inside `area`, and/or only marks [from, to) so a background repaint
+  // can split a big tree across frames. hoverTouch (user-input.js)
+  // moves/lightens the marks near the cursor
+  drawLeaves(area, from = 0, to = this.foliage.length) {
+    for (let i = from; i < min(to, this.foliage.length); i++) {
+      const stored = this.foliage[i];
+      if (area && !markInArea(stored, area)) continue;
+      const mark = hoverTouch(stored, "tree");
+      dab(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour, mark.bend);
+    }
   }
   // Leaf clumps: a few rounded clusters of dabs along each outer branch.
   // Each clump is painted in three passes so it reads as a lit ball of leaves
   // rather than flat confetti: shadow underneath, mid-tone everywhere, light
   // on top (marks drift upward with each pass, toward the sky).
-  drawFoliage(anchors) {
+  // Generated once and stored in this.foliage (like Bush marks) so the scene
+  // can be redrawn piecemeal without re-rolling random(). Call it for every
+  // tree, in draw order, before drawing any: that keeps the random() sequence
+  // (and so the look) the same as when marks were generated while drawing.
+  // Also works out this.bounds, the box everything this tree draws fits in.
+  buildFoliage() {
+    // the last two levels of branches anchor the clumps (pre-order, as drawn)
+    const anchors = [];
+    const collect = (node) => {
+      if (node.depth <= 1) anchors.push(node);
+      node.children.forEach(collect);
+    };
+    this.branches.forEach(collect);
+
     const settings = treeSettings;
     const colours =
       this.kind === "blossom"
@@ -236,26 +260,50 @@ class Tree {
       }
     }
 
+    this.foliage = [];
     for (let pass = 0; pass < 3; pass++) {
       for (const clump of clumps) {
         const markLength = max(1.5, clump.radius * settings.leafMarkLength);
         for (let i = 0; i < marksPerClump * passShare[pass]; i++) {
           // sqrt spreads marks evenly over the disc; squash it a little so
-          // clumps are wider than tall, like foliage masses
+          // clumps are wider than tall, like foliage masses.
+          // Keep the random() calls in this order: angle, r, mark angle,
+          // length, colour (jitter), bend.
           const angle = random(TWO_PI);
           const r = sqrt(random()) * clump.radius;
-          dab(
-            clump.x + cos(angle) * r,
-            clump.y + sin(angle) * r * 0.8 + passLift[pass] * clump.radius,
-            random(TWO_PI),
-            markLength * random(0.7, 1.3),
-            max(1.2, markLength * 0.6),
-            jitter(colours[pass], 8, 10, 10),
-            random(-0.2, 0.2),
-          );
+          this.foliage.push({
+            x: clump.x + cos(angle) * r,
+            y: clump.y + sin(angle) * r * 0.8 + passLift[pass] * clump.radius,
+            angle: random(TWO_PI),
+            length: markLength * random(0.7, 1.3),
+            weight: max(1.2, markLength * 0.6),
+            colour: jitter(colours[pass], 8, 10, 10),
+            bend: random(-0.2, 0.2),
+          });
         }
       }
     }
+
+    // bounds: trunk, branches and leaves, padded by mark size so a pushed or
+    // thick mark still falls inside
+    let minX = min(this.x, this.trunkTop.x) - this.baseWidth;
+    let maxX = max(this.x, this.trunkTop.x) + this.baseWidth;
+    let minY = this.trunkTop.y;
+    let maxY = this.y;
+    const grow = (x, y, pad) => {
+      minX = min(minX, x - pad);
+      maxX = max(maxX, x + pad);
+      minY = min(minY, y - pad);
+      maxY = max(maxY, y + pad);
+    };
+    const walk = (node) => {
+      for (const p of [node, node.c1, node.c2]) grow(p.x, p.y, node.weight);
+      grow(node.endX, node.endY, node.weight);
+      node.children.forEach(walk);
+    };
+    this.branches.forEach(walk);
+    for (const mark of this.foliage) grow(mark.x, mark.y, mark.length * 2);
+    this.bounds = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }
   // Distance shortcut: trunk stroke + lumpy blob of marks
   drawFar() {

@@ -64,6 +64,32 @@ const bushSettings = {
 // Filled every frame by resolvePalette() (time.js) from colors.js data.
 const palette = {};
 
+// Scene cache (AGENTS.md §5 "Render layers"). Drawing the whole scene takes
+// ~250 ms (trees ~130, grass ~50, bushes ~45: ~90k marks), far too slow to
+// repeat every frame. It's seeded and identical from frame to frame apart from
+// the slowly drifting palette, so it's painted into an offscreen buffer and
+// that picture is copied to the canvas each frame. Only the hovered patch is
+// redrawn live (redrawArea). When the palette drifts, a fresh picture is
+// painted in the background a few ms per frame (sceneSteps), then cross-faded in.
+const cacheSettings = {
+  colourThreshold: 6, // repaint once any palette colour has drifted this far (0–255 per RGB channel) [> 0];
+  //                     try 3–12 (lower = smoother time-of-day changes, more background work)
+  frameBudgetMs: 12, // ms per frame spent on a background repaint [> 0]; try 6–20
+  //                    (higher = colours catch up sooner, but frames get slower while repainting)
+  fadeFrames: 8, // frames to cross-fade a finished repaint in [whole number ≥ 1]; try 4–16
+};
+// Two sets of buffers: `current` is on screen, `pending` is being repainted
+let buffers = null; // { current: { scene, base }, pending: { scene, base } } (p5.Graphics; base = under bushes/trees)
+let rebuild = null; // background repaint in progress (sceneSteps generator)
+let rebuildPalette = null; // palette snapshot the pending repaint started with
+let cachedPaletteLevels = null; // palette snapshot the current picture was painted with
+let fadeFrom = null; // previous picture, fading out over the new one
+let fadeStart = 0; // frameCount when the fade began
+let sceneDirty = true; // repaint immediately, in one go (first frame, seed / debug / resize changes)
+let sceneBushes = []; // Bush objects in draw order, kept for partial redraws
+let sceneTrees = []; // Tree objects in draw order
+let treePlacements = []; // for the debug labels
+
 // Temporary stand-in for the Weather layer: `rain` 0–1 picks the weather
 // palette (0 = dry, 0.5 = overcast, 1 = wet). W cycles it for testing.
 const weatherStub = { rain: 0 };
@@ -76,7 +102,7 @@ let vanishingPoint;
 const hoursPerDay = 24;
 const secsPerMin = 60;
 const minsPerDay = 1; // real minutes for one virtual day (1 × 60 = 60 s)
-const FRAME_RATE = 8; // redraws per second — try 15–20 if profiling shows headroom
+const FRAME_RATE = 24; // frames per second. Cheap now the scene is cached (see cacheSettings); try 15–30
 
 const clock = {
   dayLengthSeconds: minsPerDay * secsPerMin, // 120 s per virtual day
@@ -105,14 +131,11 @@ function setup() {
   colorMode(HSB, 360, 100, 100, 1); // HSB everywhere; mixRGB() restores this exact mode
   strokeWeight(3);
   strokeCap(ROUND);
-  frameRate(FRAME_RATE); // loop at a low rate — see FRAME_RATE near clock settings above
+  frameRate(FRAME_RATE); // see FRAME_RATE near the clock settings above
   setupInputElements(); // hover glints + click bursts (user-input.js)
 }
 
 function draw() {
-  randomSeed(seed);
-  noiseSeed(seed);
-
   // Update every palette entry for the current time of day and weather.
   // Time and weather only meet here (AGENTS.md §2): either works with the
   // other switched off (rain = 0 → no weather offset).
@@ -130,15 +153,217 @@ function draw() {
     y: height * perspective.horizon,
   };
 
+  if (sceneDirty) {
+    // repaint in one go (the very first frame has nothing to show yet)
+    startRebuild();
+    stepRebuild(Infinity);
+    fadeFrom = null;
+    sceneDirty = false;
+  } else if (!rebuild && !fadeFrom && paletteDrifted()) {
+    startRebuild();
+  }
+  if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
+  drawPicture();
+
+  const touched = getTouchedArea(); // hovered patch, if any (user-input.js)
+  if (touched) redrawArea(touched);
+  updateInputElements(); // fades the hover, draws rings and bursts on top (user-input.js)
+}
+
+// The whole scene, as steps: each `yield` is a point where a background
+// repaint can pause until the next frame. The order of random() calls is the
+// same as drawing it in one go, so the picture is identical either way —
+// which is why nothing else may call p5's random() between frames (bursts use
+// Math.random). Draws into whatever target stepRebuild() points p5 at.
+function* sceneSteps() {
+  randomSeed(seed);
+  noiseSeed(seed);
   drawSky();
   noStroke();
   fill(palette.grass);
   rect(0, vanishingPoint.y, width, height - vanishingPoint.y); // flat base coat under the verges
+  yield;
   drawRoad();
-  drawGrass();
-  drawBushes(); // after the ground so it doesn't cover them, before the trees so they sit in front
-  drawTrees();
-  updateInputElements(); // glints, rings and bursts on top of the scene (user-input.js)
+  yield;
+  yield* drawGrass();
+  copyBuffer(buffers.pending.scene, buffers.pending.base); // the layer under bushes/trees, for redrawArea
+  // bushes after the ground so it doesn't cover them, before the trees so they sit in front
+  const bushes = buildBushes();
+  yield;
+  for (const bush of bushes) {
+    bush.draw();
+    yield;
+  }
+  // build every tree, then every tree's leaves, before drawing any: the same
+  // random() order as when leaves were generated while drawing, so the layout
+  // is unchanged, and drawing no longer uses random() at all
+  const { trees, placements } = buildTrees();
+  for (const tree of trees) {
+    tree.buildFoliage();
+    yield;
+  }
+  const leavesPerStep = 1500; // big near trees have ~10k leaf marks: split them up
+  for (const tree of trees) {
+    tree.drawWood();
+    for (let i = 0; i < tree.foliage.length; i += leavesPerStep) {
+      tree.drawLeaves(null, i, i + leavesPerStep);
+      yield;
+    }
+  }
+  if (debug.treeLabels) drawTreeLabels(placements);
+  return { bushes, trees, placements };
+}
+
+function startRebuild() {
+  ensureBuffers();
+  rebuild = sceneSteps();
+  rebuildPalette = paletteSnapshot();
+}
+
+// Run the background repaint for up to `budgetMs`, drawing into the pending
+// buffer: p5's drawing functions are pointed at it for the duration
+function stepRebuild(budgetMs) {
+  const start = performance.now();
+  const instance = p5.instance;
+  const mainRenderer = instance._renderer;
+  const mainContext = drawingContext;
+  instance._renderer = buffers.pending.scene._renderer;
+  drawingContext = buffers.pending.scene.drawingContext; // bushes.js uses it for the blur
+  hoverPaused = true; // keep the picture clean: hover is drawn on top by redrawArea()
+  try {
+    while (true) {
+      const step = rebuild.next();
+      if (step.done) {
+        finishRebuild(step.value);
+        break;
+      }
+      if (performance.now() - start > budgetMs) break;
+    }
+  } finally {
+    instance._renderer = mainRenderer;
+    drawingContext = mainContext;
+    hoverPaused = false;
+  }
+}
+
+// Swap the finished picture on screen and start fading the old one out
+function finishRebuild({ bushes, trees, placements }) {
+  const { current, pending } = buffers;
+  buffers = { current: pending, pending: current };
+  fadeFrom = current.scene;
+  fadeStart = frameCount;
+  sceneBushes = bushes;
+  sceneTrees = trees;
+  treePlacements = placements;
+  registerHitAreas("bush", bushes); // so hover/click know where things are (user-input.js)
+  registerHitAreas("tree", trees);
+  cachedPaletteLevels = rebuildPalette;
+  rebuild = null;
+}
+
+// Copy the current picture to the canvas, with the previous one fading out on top
+function drawPicture() {
+  drawBuffer(buffers.current.scene);
+  if (!fadeFrom) return;
+  const t = (frameCount - fadeStart) / cacheSettings.fadeFrames;
+  if (t >= 1) {
+    fadeFrom = null;
+    return;
+  }
+  drawingContext.globalAlpha = 1 - t;
+  drawBuffer(fadeFrom);
+  drawingContext.globalAlpha = 1;
+}
+
+// Redraw just `area` ({ x, y, w, h }): the static layer, then only the bushes
+// and trees that overlap it, so hovered marks move without a full repaint
+function redrawArea(area) {
+  const ctx = drawingContext;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(area.x, area.y, area.w, area.h);
+  ctx.clip();
+  drawBuffer(buffers.current.base);
+  for (const bush of sceneBushes) if (overlaps(bush.bounds, area)) bush.draw(area);
+  for (const tree of sceneTrees) if (overlaps(tree.bounds, area)) tree.draw(area);
+  if (debug.treeLabels) drawTreeLabels(treePlacements);
+  ctx.restore();
+}
+
+// True once any palette colour has moved more than colourThreshold since the
+// current picture was painted (time of day / weather), so it needs repainting
+function paletteDrifted() {
+  if (!cachedPaletteLevels) return true;
+  for (const key in palette) {
+    const now = palette[key].levels;
+    const then = cachedPaletteLevels[key];
+    if (!then) return true;
+    for (let i = 0; i < 3; i++) {
+      if (abs(now[i] - then[i]) > cacheSettings.colourThreshold) return true;
+    }
+  }
+  return false;
+}
+
+function paletteSnapshot() {
+  return Object.fromEntries(
+    Object.entries(palette).map(([key, colour]) => [key, colour.levels.slice()]),
+  );
+}
+
+// (Re)make the four offscreen buffers when missing or the pixel density changed
+function ensureBuffers() {
+  if (buffers && buffers.current.scene.pixelDensity() === pixelDensity()) return;
+  if (buffers) {
+    for (const set of [buffers.current, buffers.pending]) {
+      set.scene.remove();
+      set.base.remove();
+    }
+  }
+  const make = () => {
+    const g = createGraphics(width, height);
+    g.pixelDensity(pixelDensity());
+    g.colorMode(HSB, 360, 100, 100, 1); // same as the main canvas (setup)
+    g.strokeCap(ROUND);
+    return g;
+  };
+  buffers = {
+    current: { scene: make(), base: make() },
+    pending: { scene: make(), base: make() },
+  };
+  fadeFrom = null;
+}
+
+// Pixel-for-pixel copy of one buffer into another
+function copyBuffer(from, to) {
+  const ctx = to.drawingContext;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.drawImage(from.elt, 0, 0);
+  ctx.restore();
+}
+
+// Paint a buffer over the whole canvas (it's at pixel density, so scale it
+// down into scene units)
+function drawBuffer(buffer) {
+  drawingContext.drawImage(buffer.elt, 0, 0, width, height);
+}
+
+// Could this mark ({ x, y, length }) touch `area`? Padded by two lengths:
+// one for the mark itself, one for how far the hover can push it
+function markInArea(mark, area) {
+  const pad = mark.length * 2;
+  return (
+    mark.x > area.x - pad &&
+    mark.x < area.x + area.w + pad &&
+    mark.y > area.y - pad &&
+    mark.y < area.y + area.h + pad
+  );
+}
+
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 function mousePressed() {
@@ -149,11 +374,13 @@ function keyPressed() {
   if (key === "r" || key === "R") {
     // seed = floor(random(1, 10000));
     // console.log(seed);
+    sceneDirty = true;
     redraw();
   }
   // if (key === "s" || key === "S") saveCanvas(`woldgate-${seed}`, "png");
   if (key === "d" || key === "D") {
     debug.treeLabels = !debug.treeLabels;
+    sceneDirty = true; // labels are part of the cached scene
     redraw();
   }
   if (key === "w" || key === "W") {
@@ -297,20 +524,25 @@ function clump(point, colour) {
   }
 }
 
-function drawGrass() {
+// A generator: each `yield` lets a background repaint pause between passes
+// (sceneSteps). Run it in one go with `for (const _ of drawGrass());`
+function* drawGrass() {
   // dark → mid → light passes
   for (let i = 0; i < marks(700); i++) {
     const point = vergePoint();
     if (point) clump(point, palette.grassDark);
   }
+  yield;
   for (let i = 0; i < marks(800); i++) {
     const point = vergePoint();
     if (point) clump(point, palette.grass);
   }
+  yield;
   for (let i = 0; i < marks(350); i++) {
     const point = vergePoint();
     if (point) clump(point, palette.grassLight);
   }
+  yield;
 
   // clumps spilling over the road edges
   for (let i = 0; i < marks(260); i++) {
@@ -324,6 +556,7 @@ function drawGrass() {
       random([palette.grass, palette.grassDark, palette.grassLight]),
     );
   }
+  yield;
 
   // flower dots
   noStroke();
@@ -350,7 +583,8 @@ function drawGrass() {
 // Trees
 // ---------------------------------------------------------------------------
 
-function drawTrees() {
+// Tree layout: placements from the `along` lists, and a Tree for each (far → near)
+function buildTrees() {
   const placements = [];
   const leftTrees = [0.04, 0.2, 0.24, 0.38, 0.4, 0.55, 0.7, 0.82, 0.9]; // `along` positions on the lane
   const rightTrees = [
@@ -387,16 +621,13 @@ function drawTrees() {
   }
 
   placements.sort((a, b) => a.point.y - b.point.y); // far → near
-  // build every tree before drawing any: drawing uses random() too (leaf
-  // marks), and doing it in between would change the shapes of later trees
-  const trees = placements.map(
-    ({ point, treeHeight, kind, side }) =>
-      new Tree(point.x, point.y, treeHeight, kind, side),
-  );
-  for (const tree of trees) tree.draw();
-  registerHitAreas("tree", trees); // so hover/click know where trees are (user-input.js)
-
-  if (debug.treeLabels) drawTreeLabels(placements);
+  const trees = placements
+    .map(
+      ({ point, treeHeight, kind, side }) =>
+        new Tree(point.x, point.y, treeHeight, kind, side),
+    )
+    .filter((tree) => !tree.far);
+  return { trees, placements };
 }
 
 // Debug: label each trunk base with its side + `along` value, drawn after all
@@ -422,7 +653,8 @@ function drawTreeLabels(placements) {
 // ---------------------------------------------------------------------------
 // Bushes: overlapping blob clumps along each verge (see bushes.js)
 // ---------------------------------------------------------------------------
-function drawBushes() {
+// Builds the clumps (far → near) without drawing them
+function buildBushes() {
   randomSeed(seed + 1); // separate random stream for the bushes
   const settings = bushSettings;
 
@@ -456,10 +688,8 @@ function drawBushes() {
   }
 
   bushes.sort((a, b) => a.y - b.y); // far → near
-  for (const bush of bushes) bush.draw();
-  registerHitAreas("bush", bushes); // so hover/click know where bushes are (user-input.js)
-
   randomSeed(seed); // reset so the trees get exactly the same layout as before
+  return bushes;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +703,7 @@ function windowResized() {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     pixelDensity(sharpDensity());
+    sceneDirty = true; // cache size follows the pixel density
     redraw();
   }, 200);
 }

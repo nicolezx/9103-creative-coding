@@ -1,10 +1,15 @@
-// User input: hover glints and click bursts.
+// User input: hover rustle and click bursts.
 //
-// Hover: the canvas is split into a grid of ColourBlocks. Blocks within
-// `hoverRadius` of the cursor "glint" — they take a lighter highlight colour
-// from the palette of whatever is underneath (tree, bush, water, track, sky),
-// like light catching that surface. Once the cursor moves on, each block fades
-// back to the scene's own colour over `glintDuration`.
+// Hover: nothing is drawn on top of the scene. Instead the existing leaf marks
+// on trees and the marks on bushes are nudged as they're drawn: within
+// `hoverRadius` of the cursor they're pushed away from it and twisted a little,
+// and some of them (`lightenShare`) blend toward a lighter colour from their
+// region's palette, as if the moved leaves catch the light. Once the cursor
+// moves on, they ease back to their place and colour over `glintDuration`.
+//
+// The canvas is split into a grid of ColourBlocks that only *remember* the
+// touch: where the cursor was and how much it has faded since. Tree.drawFoliage()
+// and Bush.drawMarks() ask hoverTouch() how to move each of their marks.
 //
 // Click: on a tree or bush, a handful of Burst pieces (blossom / leaf bits)
 // shoot out from the click; every click also leaves a ring (a ripple on water).
@@ -17,11 +22,14 @@
 // Settings
 // ---------------------------------------------------------------------------
 // Ranges: [hard limits] are what the code can handle; "try" is what looks good.
-const hoverRadius = 70; // px (scene units) around the cursor that glints [> 0]; try 40–120
-const glintDuration = 900; // ms for a glint to fade back once the cursor leaves [> 0]; try 400–1500
+const hoverRadius = 70; // px (scene units) around the cursor that disturbs marks [> 0]; try 40–120
+const glintDuration = 900; // ms for marks to settle back once the cursor leaves [> 0]; try 400–1500
 const columns = 64; // grid columns across the canvas [whole number ≥ 1, more = finer but slower]; try 32–96
 const rows = 36; // grid rows (64 × 36 keeps cells square on the 16:9 canvas) [whole number ≥ 1]; try 18–54
-const glintStrength = 0.55; // max opacity of a glint at the cursor [0–1]; try 0.3–0.8
+const hoverPush = 0.6; // how far marks are pushed from the cursor, in mark lengths [≥ 0]; try 0.3–1
+const hoverTwist = 0.6; // max extra rotation of a pushed mark, radians [≥ 0]; try 0.2–1
+const lightenShare = 0.35; // fraction of touched marks that lighten [0–1]; try 0.2–0.5
+const hoverLighten = 0.55; // how far those marks blend toward the highlight colour [0–1]; try 0.3–0.7
 const burstCount = [10, 18]; // [min, max] pieces per click on a tree/bush [whole numbers ≥ 0]
 const burstLife = 1400; // ms a burst piece lives [> 0]; try 800–2500
 const ringLife = 900; // ms a click ring takes to fade out [> 0]; try 500–1500
@@ -33,7 +41,8 @@ let blocks = []; // ColourBlock grid
 let bursts = []; // live Burst pieces
 let rings = []; // live click rings: { x, y, scale, age, isWater }
 
-// Highlight colours per region, as [h, s, b]. Rebuilt every frame from
+// Highlight colours per region, as [h, s, b]. Tree/bush ones lighten touched
+// marks; the rest colour click rings. Rebuilt every frame from
 // `palette` (updateInputElements) so they shift with time of day and weather.
 let treePalette = [];
 let bushPalette = [];
@@ -44,12 +53,16 @@ let skyPalette = [];
 // Cursor in scene coordinates (null when it's off the canvas)
 let sceneMouse = null;
 
+// True while sketch.js paints its cache, so hovered marks aren't baked in
+let hoverPaused = false;
+
 // Hit areas for trees and bushes, filled by registerHitAreas() from
-// drawTrees() / drawBushes() in sketch.js. Stored in draw order (far → near).
+// finishRebuild() in sketch.js. Stored in draw order (far → near).
 const hitAreas = { tree: [], bush: [] };
 
 // ---------------------------------------------------------------------------
-// ColourBlock: one grid cell. Holds its own highlight and reacts to the cursor.
+// ColourBlock: one grid cell. Remembers whether the cursor touched it, where,
+// and how much that touch has faded. Draws nothing itself.
 // ---------------------------------------------------------------------------
 class ColourBlock {
   constructor(x, y, w, h) {
@@ -57,73 +70,43 @@ class ColourBlock {
     this.y = y;
     this.w = w;
     this.h = h;
-    this.cx = x + w / 2;
-    this.cy = y + h / 2;
-    this.glint = 0; // current strength 0–1
-    this.peak = 0; // strength when the glint last started/refreshed
-    this.startedAt = 0; // millis() of that moment
-    this.highlight = null; // [h, s, b]
-    // A few fixed dabs per cell so the glint reads as painted light, not a
-    // flat square. Math.random (not p5's seeded random) so cells differ.
-    this.dabs = [];
-    for (let i = 0; i < 3; i++) {
-      this.dabs.push({
-        dx: (Math.random() - 0.5) * w * 0.8,
-        dy: (Math.random() - 0.5) * h * 0.8,
-        angle: Math.random() * TWO_PI,
-        length: w * (0.6 + Math.random() * 0.6),
-        bend: (Math.random() - 0.5) * 0.3,
-      });
-    }
+    this.glint = 0; // touch strength 0–1: 1 while the cursor is near, then fades
+    this.startedAt = 0; // millis() of the last touch
+    this.touchX = 0; // cursor position at the last touch: marks are pushed away from it
+    this.touchY = 0;
   }
 
-  // Strength 0–1 if the cursor is within hoverRadius, else 0
+  // True if any part of the cell is within hoverRadius of the cursor, so marks
+  // near the cell's edge are covered too
   isNearMouse() {
-    if (!sceneMouse) return 0;
-    const d = dist(this.cx, this.cy, sceneMouse.x, sceneMouse.y);
-    return d < hoverRadius ? 1 - d / hoverRadius : 0;
+    if (!sceneMouse) return false;
+    const nearestX = constrain(sceneMouse.x, this.x, this.x + this.w);
+    const nearestY = constrain(sceneMouse.y, this.y, this.y + this.h);
+    return dist(nearestX, nearestY, sceneMouse.x, sceneMouse.y) < hoverRadius;
   }
 
-  // Light up (or keep lit) at `strength`; a stronger hit overrides a fading one
-  startGlint(strength) {
-    if (strength < this.glint) return;
-    const region = getRegion(this.cx, this.cy);
-    // keep the same colour while it stays lit, so it doesn't flicker
-    if (!this.highlight || this.glint <= 0 || region !== this.region) {
-      this.highlight = pickHighlight(region);
-    }
-    this.region = region;
-    this.peak = strength;
-    this.glint = strength;
+  // Touch (or keep touching) at the current cursor position
+  startGlint() {
+    this.glint = 1;
     this.startedAt = millis();
+    this.touchX = sceneMouse.x;
+    this.touchY = sceneMouse.y;
   }
 
-  // Fade linearly back to nothing over glintDuration
+  // Fade linearly back to untouched over glintDuration
   update() {
     if (this.glint <= 0) return;
-    const fade = 1 - (millis() - this.startedAt) / glintDuration;
-    this.glint = max(0, this.peak * fade);
+    this.glint = max(0, 1 - (millis() - this.startedAt) / glintDuration);
   }
 
-  display() {
-    if (this.glint <= 0 || !this.highlight) return;
-    const [h, s, b] = this.highlight;
-    const alpha = this.glint * glintStrength;
-    noStroke();
-    fill(h, s, b, alpha * 0.6);
-    rect(this.x, this.y, this.w, this.h); // soft wash over the cell
-    strokeCap(ROUND);
-    for (const d of this.dabs) {
-      dab(
-        this.cx + d.dx,
-        this.cy + d.dy,
-        d.angle,
-        d.length,
-        this.w * 0.35,
-        color(h, s, b, alpha),
-        d.bend,
-      );
-    }
+  // How strongly a mark at (x, y) is disturbed, 0–1: full at the touch point,
+  // easing to nothing at hoverRadius, scaled by how much the touch has faded
+  strengthAt(x, y) {
+    if (this.glint <= 0) return 0;
+    const d = dist(x, y, this.touchX, this.touchY);
+    if (d >= hoverRadius) return 0;
+    const falloff = 1 - d / hoverRadius;
+    return this.glint * falloff * falloff * (3 - 2 * falloff); // smoothstep: no hard rim
   }
 }
 
@@ -136,12 +119,12 @@ class Burst {
     this.y = y;
     this.colour = colour; // [h, s, b]
     this.size = size;
-    const angle = random(TWO_PI);
-    const speed = random(80, 260) * (size / 6); // px per second, bigger near the viewer
+    const angle = randomBetween(0, TWO_PI);
+    const speed = randomBetween(80, 260) * (size / 6); // px per second, bigger near the viewer
     this.vx = cos(angle) * speed;
     this.vy = sin(angle) * speed - speed * 0.4; // bias upward: it's flung off the branch
-    this.angle = random(TWO_PI);
-    this.spin = random(-6, 6); // radians per second
+    this.angle = randomBetween(0, TWO_PI);
+    this.spin = randomBetween(-6, 6); // radians per second
     this.age = 0;
     this.done = false;
   }
@@ -172,15 +155,14 @@ class Burst {
 // ---------------------------------------------------------------------------
 
 // Called from setup(): build the grid and start tracking the cursor.
-// Pointer events fire between frames, so glints start where the cursor
+// Pointer events fire between frames, so touches start where the cursor
 // actually passed even though the scene only redraws at FRAME_RATE.
 function setupInputElements() {
   buildBlocks();
   window.addEventListener("pointermove", (event) => {
     sceneMouse = toScene(event.clientX, event.clientY);
     for (const block of blocks) {
-      const strength = block.isNearMouse();
-      if (strength > 0) block.startGlint(strength);
+      if (block.isNearMouse()) block.startGlint();
     }
   });
   document.addEventListener("pointerleave", () => (sceneMouse = null));
@@ -225,8 +207,10 @@ function getRegion(x, y) {
   return inRut ? "water" : "track";
 }
 
-// A random highlight colour for a region, as [h, s, b]
-function pickHighlight(region) {
+// A highlight colour for a region, as [h, s, b]. `pick` (0–1) chooses which;
+// random by default. Code that runs inside draw() must pass its own value:
+// p5's random() drives the seeded scene layout, and an extra call would reshuffle it.
+function pickHighlight(region, pick = Math.random()) {
   const choices = {
     tree: treePalette,
     bush: bushPalette,
@@ -234,16 +218,17 @@ function pickHighlight(region) {
     track: trackPalette,
     sky: skyPalette,
   }[region];
-  return random(choices);
+  return choices[floor(pick * choices.length)];
 }
 
-// Called at the end of draw(): refresh highlight palettes, keep glinting the
-// blocks under a still cursor, then update + draw glints, rings and bursts.
+// Called at the end of draw(): refresh highlight palettes, keep touching the
+// blocks under a still cursor, fade the rest, then update + draw rings and bursts.
 function updateInputElements() {
   // Highlights are the lighter keys of each region's palette, so the "light"
   // matches the current time of day (warm at golden hour, dim at night).
   const hsb = (c) => [hue(c), saturation(c), brightness(c)];
   treePalette = [palette.leafLight, palette.blossomLight, palette.flowerWhite].map(hsb);
+  // (bush marks are dark greens, so mid greens still read as lighter)
   bushPalette = [palette.grassLight, palette.leafLight, palette.leaf].map(hsb);
   waterPalette = [palette.cloud, palette.skyLow, palette.flowerWhite].map(hsb); // reflects the sky
   trackPalette = [palette.ridge, palette.cloud].map(hsb);
@@ -251,15 +236,14 @@ function updateInputElements() {
 
   const dt = min(deltaTime, 250) / 1000; // seconds; capped so a stall doesn't teleport pieces
 
-  push();
-  // SCREEN only ever lightens, like light falling on the surface
-  blendMode(SCREEN);
   for (const block of blocks) {
-    const strength = block.isNearMouse();
-    if (strength > 0) block.startGlint(strength); // cursor resting: stay lit
+    if (block.isNearMouse()) block.startGlint(); // cursor resting: stay disturbed
     block.update();
-    block.display();
   }
+
+  push();
+  // SCREEN only ever lightens, like light catching the ring
+  blendMode(SCREEN);
 
   // Rings: flattened by perspective so they lie on the ground
   noFill();
@@ -311,15 +295,87 @@ function handleInputClick() {
       region === "tree"
         ? [palette.blossom, palette.blossomLight, palette.leaf, palette.leafLight]
         : [palette.leaf, palette.leafLight, palette.grassLight];
-    const count = floor(random(burstCount[0], burstCount[1] + 1));
+    const count = floor(randomBetween(burstCount[0], burstCount[1] + 1));
     const size = lerp(3, 10, constrain(scale, 0, 1)); // bigger near the viewer
     for (let i = 0; i < count; i++) {
-      bursts.push(new Burst(point.x, point.y, hsb(random(colours)), size * random(0.7, 1.3)));
+      const colour = colours[floor(Math.random() * colours.length)];
+      bursts.push(new Burst(point.x, point.y, hsb(colour), size * randomBetween(0.7, 1.3)));
     }
   }
 }
 
-// Record tree / bush hit areas. Called from drawTrees() / drawBushes() with
+// Hover hook for Tree.drawFoliage() and Bush.drawMarks(). Takes one mark
+// { x, y, angle, length, colour } and returns it unchanged if the cursor
+// hasn't touched it, or a moved copy: pushed away from the touch point, turned
+// a little, and (for some marks) blended toward a lighter highlight colour.
+// Never calls p5's random(): it runs mid-draw, where that would change the scene.
+function hoverTouch(mark, region) {
+  if (hoverPaused || !blocks.length) return mark;
+  const col = floor(mark.x / (width / columns));
+  const row = floor(mark.y / (height / rows));
+  if (col < 0 || col >= columns || row < 0 || row >= rows) return mark;
+  const block = blocks[row * columns + col];
+  const strength = block.strengthAt(mark.x, mark.y);
+  if (strength <= 0) return mark;
+
+  // Stable per-mark number 0–1 from its position (marks sit in the same place
+  // every frame), so the same leaves twist and lighten each frame instead of
+  // flickering
+  const h = markHash(mark.x, mark.y);
+  // Slight rustle while touched; each mark on its own phase
+  const shiver = sin(millis() * 0.012 + h * TWO_PI) * 0.25;
+  const away = atan2(mark.y - block.touchY, mark.x - block.touchX);
+  const push = strength * hoverPush * mark.length * (1 + shiver);
+
+  let colour = mark.colour;
+  if (h < lightenShare) {
+    const highlight = pickHighlight(region, h / lightenShare);
+    if (highlight) colour = mixRGB(colour, color(...highlight), strength * hoverLighten);
+  }
+  return {
+    ...mark,
+    x: mark.x + cos(away) * push,
+    y: mark.y + sin(away) * push,
+    angle: mark.angle + (h * 2 - 1 + shiver) * hoverTwist * strength,
+    colour,
+  };
+}
+
+// The box around every live touch ({ x, y, w, h }), or null when nothing is
+// touched. sketch.js redraws only this patch each frame (redrawArea).
+function getTouchedArea() {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const block of blocks) {
+    if (block.glint <= 0) continue;
+    minX = min(minX, block.touchX);
+    maxX = max(maxX, block.touchX);
+    minY = min(minY, block.touchY);
+    maxY = max(maxY, block.touchY);
+  }
+  if (minX === Infinity) return null;
+  // marks within hoverRadius move, and can be pushed up to about a mark
+  // length further; 40 px covers that for the largest leaves
+  const reach = hoverRadius + 40;
+  return { x: minX - reach, y: minY - reach, w: maxX - minX + reach * 2, h: maxY - minY + reach * 2 };
+}
+
+// Unseeded random number in [a, b). Input code uses this instead of p5's
+// random(): the scene repaints in the background across several frames, and
+// any p5 random() call in between would change its layout.
+function randomBetween(a, b) {
+  return a + Math.random() * (b - a);
+}
+
+// Cheap repeatable hash of a position → 0–1
+function markHash(x, y) {
+  const v = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+// Record tree / bush hit areas. Called from finishRebuild() (sketch.js) with
 // the objects in draw order; cheap enough to redo every frame.
 function registerHitAreas(kind, objects) {
   if (kind === "bush") {
