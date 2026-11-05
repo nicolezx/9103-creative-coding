@@ -36,6 +36,14 @@ const perspective = {
 };
 
 // Undergrowth clumps (bushes.js)
+const treeSettings = {
+  sizeFactor: [1.45, 2], // [min, max] tree height as a fraction of canvas height at lane scale 1 [> 0, min ≤ max]; try 0.8–2.5
+  clumpsPerBranch: [2, 4], // [min, max] leaf clumps on each outer branch [≥ 0, min ≤ max]; try 0–5
+  clumpSize: [0.3, 0.55], // [min, max] clump radius as a fraction of its branch's length [> 0]; try 0.15–0.7
+  leafMarksPerClump: 90, // dabs per clump on the nearest trees (far trees get fewer) [whole number ≥ 0, higher = denser but slower]; try 30–150
+  leafMarkLength: 0.4, // dab length as a fraction of clump radius [> 0]; try 0.15–0.5
+};
+
 const bushSettings = {
   baseAcross: 0.1, // nearest clump feet, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
   acrossSpread: 0.45, // how much further out from there clumps can sit [≥ 0]; try 0–1
@@ -45,7 +53,11 @@ const bushSettings = {
   sizeFactor: [0.5, 0.8], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
   lumpFrequency: 1.4, // how many lobes the outline wobbles into [> 0, higher = more, smaller lobes]; try 0.5–3
   lumpDepth: 0.22, // how far the lobes push in/out [0–1, 0 = clean ellipse]; try 0–0.4
-  marksPerClump: 0, // dashes on a mid-sized clump [whole number ≥ 0, 0 = none]; try 0–40
+  marksPerClump: 1000, // dashes per clump, spread over the whole blob [whole number ≥ 0, 0 = none, higher = denser but slower]; try 80–300
+  markLength: 0.07, // dash length as a fraction of clump size [> 0]; try 0.03–0.12
+  curvedShare: 0.4, // fraction of dashes drawn curved [0–1, 0 = all straight]; try 0.2–0.6
+  markBend: 0.15, // max bow of a curved dash, as a fraction of its length [≥ 0]; try 0.05–0.3
+  markWeight: 0.025, // dash thickness as a fraction of clump size (min 1px) [> 0]; try 0.01–0.04
   blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
@@ -346,7 +358,8 @@ function drawTrees() {
         const along = leftTrees[i] + random(0);
         const across = side < 0 ? -0.12 - random(0.1) : 1.12 + random(0.3);
         const point = lane(along, across);
-        const treeHeight = point.scale * height * random(0.85, 1.15);
+        const treeHeight =
+          point.scale * height * random(...treeSettings.sizeFactor);
         const kind = "leaf";
         if (point.x < -40 || point.x > width + 40 || point.y > height + 40)
           continue; // off-canvas (zoom pushes the nearest trees out of frame)
@@ -357,7 +370,8 @@ function drawTrees() {
         const along = rightTrees[i] + random(0);
         const across = side < 0 ? -0.12 - random(0.3) : 1.12 + random(0.3);
         const point = lane(along, across);
-        const treeHeight = point.scale * height * random(0.85, 1.15);
+        const treeHeight =
+          point.scale * height * random(...treeSettings.sizeFactor);
         const kind = "leaf";
         if (point.x < -40 || point.x > width + 40 || point.y > height + 40)
           continue; // off-canvas (zoom pushes the nearest trees out of frame)
@@ -367,10 +381,13 @@ function drawTrees() {
   }
 
   placements.sort((a, b) => a.point.y - b.point.y); // far → near
-  for (const placement of placements) {
-    const { point, treeHeight, kind, side } = placement;
-    new Tree(point.x, point.y, treeHeight, kind, side).draw();
-  }
+  // build every tree before drawing any: drawing uses random() too (leaf
+  // marks), and doing it in between would change the shapes of later trees
+  const trees = placements.map(
+    ({ point, treeHeight, kind, side }) =>
+      new Tree(point.x, point.y, treeHeight, kind, side),
+  );
+  for (const tree of trees) tree.draw();
 
   if (debug.treeLabels) drawTreeLabels(placements);
 }

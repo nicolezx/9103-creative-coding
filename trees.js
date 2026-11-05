@@ -112,10 +112,6 @@ class Tree {
     this.far ? this.drawFar() : this.drawFull();
   }
   drawFull() {
-    const foliageColours =
-      this.kind === "blossom"
-        ? [palette.blossom, palette.blossomLight]
-        : [palette.leaf, palette.leafLight];
     const topWidth = this.baseWidth * 0.6;
 
     // trunk: tapered shape with curved sides + bark dashes
@@ -205,30 +201,61 @@ class Tree {
     };
     this.branches.forEach(drawBranch);
 
-    // leaf / blossom clusters: base pass then light pass
-    const sizeScale = min(1, this.height / 400);
-    const marksPerAnchor = this.kind === "blossom" ? 14 : 10;
-    // for (const pass of [0, 1]) {
-    //   for (const anchor of foliageAnchors) {
-    //     for (let i = 0; i < marksPerAnchor; i++) {
-    //       const alongBranch = random(0.3, 1.1);
-    //       const markX =
-    //         lerp(anchor.x, anchor.endX, alongBranch) +
-    //         random(-1, 1) * anchor.length * 0.35;
-    //       const markY =
-    //         lerp(anchor.y, anchor.endY, alongBranch) +
-    //         random(-1, 1) * anchor.length * 0.35;
-    //       dash(
-    //         markX,
-    //         markY,
-    //         random(TWO_PI),
-    //         lerp(2, 12, sizeScale) * random(0.7, 1.3),
-    //         lerp(1.5, 5.5, sizeScale),
-    //         jitter(foliageColours[pass], 10, 12, 12, 0.92),
-    //       );
-    //     }
-    //   }
-    // }
+    // leaf / blossom clumps around the outer branches
+    this.drawFoliage(foliageAnchors);
+  }
+  // Leaf clumps: a few rounded clusters of dabs along each outer branch.
+  // Each clump is painted in three passes so it reads as a lit ball of leaves
+  // rather than flat confetti: shadow underneath, mid-tone everywhere, light
+  // on top (marks drift upward with each pass, toward the sky).
+  drawFoliage(anchors) {
+    const settings = treeSettings;
+    const colours =
+      this.kind === "blossom"
+        ? [palette.blossom, palette.blossom, palette.blossomLight]
+        : [palette.bush, palette.leaf, palette.leafLight];
+    // far trees get fewer marks; detail is lost at that size anyway
+    const sizeScale = min(1, this.height / 500);
+    const marksPerClump = round(
+      lerp(settings.leafMarksPerClump * 0.4, settings.leafMarksPerClump, sizeScale),
+    );
+    const passShare = [0.3, 0.45, 0.25]; // shadow / mid / light share of each clump's marks
+    const passLift = [0.35, 0, -0.35]; // vertical drift per pass, in clump radii (− = up)
+
+    const clumps = [];
+    for (const anchor of anchors) {
+      const count = round(random(...settings.clumpsPerBranch));
+      for (let i = 0; i < count; i++) {
+        // clumps sit along the outer part of the branch and spill past the tip
+        const t = random(0.45, 1.05);
+        clumps.push({
+          x: bezierPoint(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t),
+          y: bezierPoint(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t),
+          radius: anchor.length * random(...settings.clumpSize),
+        });
+      }
+    }
+
+    for (let pass = 0; pass < 3; pass++) {
+      for (const clump of clumps) {
+        const markLength = max(1.5, clump.radius * settings.leafMarkLength);
+        for (let i = 0; i < marksPerClump * passShare[pass]; i++) {
+          // sqrt spreads marks evenly over the disc; squash it a little so
+          // clumps are wider than tall, like foliage masses
+          const angle = random(TWO_PI);
+          const r = sqrt(random()) * clump.radius;
+          dab(
+            clump.x + cos(angle) * r,
+            clump.y + sin(angle) * r * 0.8 + passLift[pass] * clump.radius,
+            random(TWO_PI),
+            markLength * random(0.7, 1.3),
+            max(1.2, markLength * 0.6),
+            jitter(colours[pass], 8, 10, 10),
+            random(-0.2, 0.2),
+          );
+        }
+      }
+    }
   }
   // Distance shortcut: trunk stroke + lumpy blob of marks
   drawFar() {

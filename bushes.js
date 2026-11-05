@@ -38,20 +38,27 @@ class Bush {
       });
     }
 
-    // marks inside the blob, generated once so redraws don't re-roll them
-    const sizeScale = min(1, size / 400);
+    // marks across the whole blob, generated once so redraws don't re-roll them.
+    // Mark size is proportional to the clump, so the same count covers near
+    // and far clumps equally densely
     this.marks = [];
-    const markCount = floor(settings.marksPerClump * (0.5 + sizeScale));
-    for (let i = 0; i < markCount; i++) {
-      // biased toward the top of the clump, where the light catches it
-      const angle = random(PI, TWO_PI);
-      const radius = sqrt(random()) * 0.95;
+    for (let i = 0; i < settings.marksPerClump; i++) {
+      // step from the centre toward a random outline point: always lands
+      // inside the wobbly edge (incl. the flattened foot); sqrt spreads them
+      // evenly by area instead of bunching in the middle
+      const edge = random(this.outline);
+      const t = sqrt(random()) * 0.95;
       this.marks.push({
-        x: x + cos(angle) * radiusX * radius,
-        y: centreY + sin(angle) * radiusY * radius,
+        x: lerp(x, edge.x, t),
+        y: lerp(centreY, edge.y, t),
         angle: random(TWO_PI),
-        length: lerp(2, 12, sizeScale) * random(0.7, 1.3),
-        weight: lerp(1.5, 5.5, sizeScale),
+        length: size * settings.markLength * random(0.7, 1.3),
+        weight: max(1, size * settings.markWeight),
+        // only some strokes curve, so the texture mixes straight and bowed marks
+        bend:
+          random() < settings.curvedShare
+            ? random([-1, 1]) * random(0.5, 1) * settings.markBend
+            : 0,
         colour: jitter(palette.bush, 10, 10, 12),
       });
     }
@@ -76,7 +83,11 @@ class Bush {
 
   drawMarks() {
     for (const mark of this.marks) {
-      dash(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour);
+      if (mark.bend === 0) {
+        dash(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour);
+      } else {
+        dab(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour, mark.bend);
+      }
     }
   }
 }

@@ -101,6 +101,28 @@ function dash(x, y, angle, length, weight, colour) {
   line(x - offsetX, y - offsetY, x + offsetX, y + offsetY);
 }
 
+// Curved dab centred on (x, y): like dash() but bowed sideways. `bend` is how
+// far the middle bows, as a fraction of length (+/- picks the side; 0 = straight)
+function dab(x, y, angle, length, weight, colour, bend) {
+  stroke(colour);
+  strokeWeight(weight);
+  noFill(); // the curve is stroke-only; otherwise p5 fills the bowed area
+  const offsetX = (cos(angle) * length) / 2;
+  const offsetY = (sin(angle) * length) / 2;
+  // a quadratic's midpoint sits halfway to its control point, so push the
+  // control point twice the wanted bow out along the perpendicular
+  const bow = bend * length * 2;
+  beginShape();
+  vertex(x - offsetX, y - offsetY);
+  quadraticVertex(
+    x - sin(angle) * bow,
+    y + cos(angle) * bow,
+    x + offsetX,
+    y + offsetY,
+  );
+  endShape();
+}
+
 // Tapered blade: thick lower half, thin upper half with a slight bend
 function blade(x, y, angle, length, weight, colour) {
   stroke(colour);

@@ -133,10 +133,10 @@ Don't hard-code colours in scene code — always go through `palette`.
   | -------- | --------- | ------------------------------ | ----------------------- |
   | Dash     | `dash()`  | straight, round ends           | road, bark, bush marks  |
   | Blade    | `blade()` | tapered, slightly bent stroke  | grass clumps            |
-  | Dab      | planned   | short, thick, slightly curved  | leaves, grass accents   |
+  | Dab      | `dab()`   | short, thick, slightly curved  | bush marks, leaves, grass accents |
   | Scribble | planned   | 3–5 noise-nudged points        | blossom, ragged edges   |
 
-- **Trees (`trees.js`):** recursive branches with bezier bends, generated in the `Tree` constructor and drawn from that data. Placement comes from the `leftTrees` / `rightTrees` `along` lists in `drawTrees()`. **Target:** store the generated trees once (not rebuild per frame), add sway/shake as a per-node angle accumulating down the tree, and give only the nearest 2–3 trees full branching (`drawFar()` exists but `this.far` is currently disabled).
+- **Trees (`trees.js`):** recursive branches with bezier bends, generated in the `Tree` constructor and drawn from that data. Placement comes from the `leftTrees` / `rightTrees` `along` lists in `drawTrees()`; size from `treeSettings.sizeFactor`. Leaves are clumps of `dab()` marks around the outer branches (`drawFoliage()`: shadow → mid → light pass, settings in `treeSettings`). All trees are built before any are drawn so drawing's `random()` calls don't change later trees' shapes. **Target:** store the generated trees once (not rebuild per frame), add sway/shake as a per-node angle accumulating down the tree, and give only the nearest 2–3 trees full branching (`drawFar()` exists but `this.far` is currently disabled).
 - **Bushes (`bushes.js`):** overlapping `Bush` clumps along each verge, placed through `lane()` by `drawBushes()` (settings in `bushSettings`) and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with optional crisp dashes on top. Don't build bushes from branch skeletons.
 - **Randomness:** seeded (`randomSeed(seed)`, `noiseSeed(seed)` at the start of every `draw()`; bushes use `seed + 1`) so the layout is identical every frame and for everyone debugging.
 
@@ -166,10 +166,10 @@ Scripts are plain (non-module) `<script>` tags sharing globals; load order in `i
 | ------------- | --------------------------------------------------------------------------------------------- |
 | `colors.js`   | Colour data as `[h, s, b]`: `WEATHER_SETS`, `TIME_KEYFRAMES`                                  |
 | `time.js`     | Clock + pause, OKLab blending, keyframe schedule, `getDaylight()`, `getWeatherOffset()`, `resolvePalette()` |
-| `utils.js`    | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`), `jitter`, `mixRGB`, `sharpDensity` |
-| `trees.js`    | `Tree` (recursive bending branches) + bezier helpers                                          |
+| `utils.js`    | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`, `dab`), `jitter`, `mixRGB`, `sharpDensity` |
+| `trees.js`    | `Tree` (recursive bending branches, leaf clumps) + bezier helpers                                          |
 | `bushes.js`   | `Bush` (one blurred undergrowth clump)                                                        |
-| `sketch.js`   | p5 entry point, settings (`perspective`, `bushSettings`, `clock`, `FRAME_RATE`), draw order, scene passes, `weatherStub`, input |
+| `sketch.js`   | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `clock`, `FRAME_RATE`), draw order, scene passes, `weatherStub`, input |
 | `index.html`  | Script order + HUD markup (time / temperature / conditions)                                   |
 | `style.css`   | Canvas scaling (cover the window) + HUD styling                                               |
 | `assets/`     | Reference image(s) from the series                                                            |
