@@ -36,7 +36,7 @@ const moonSettings = {
 
 // Phase: 0 = new moon, 0.5 = full moon, 1 = new moon.
 // _moonPhaseDay is 0–7, advancing by 1 at each midnight.
-let _moonPhaseDay = 0;
+let _moonPhaseDay = 4;
 let _moonPrevFraction = -1; // getDayFraction() from the previous frame, for midnight detection
 
 function getMoonPhase() {
