@@ -207,6 +207,7 @@ function draw() {
   // after the patch, so a cross-fade covers the patch too (otherwise the patch
   // shows the new colours while the rest is mid-fade: a visible square)
   drawFadingPicture();
+  updateRain(); // puddle patches, splashes, falling drops (rain.js)
   updateInputElements(); // fades the hover, draws rings and bursts on top (user-input.js)
 }
 
