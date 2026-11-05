@@ -1,5 +1,6 @@
-// Shared helpers for the Woldgate scene: perspective, placement and mark
-// primitives. Nothing here draws a whole scene object on its own.
+// Shared helpers for the Woldgate scene: perspective, placement, mark
+// primitives, number helpers (hash, easing, falloff), shape tests and
+// screen ↔ scene conversion. Nothing here draws a whole scene object on its own.
 // Relies on globals set up in sketch.js (perspective, vanishingPoint,
 // markDensity, canvasWidth/canvasHeight), read at call time.
 
@@ -92,6 +93,11 @@ function mixRGB(fromColour, toColour, amount) {
   return mixed;
 }
 
+// A p5 colour as a plain [h, s, b] array (for storing, or for adding alpha later)
+function colourToHsb(colour) {
+  return [hue(colour), saturation(colour), brightness(colour)];
+}
+
 // Straight dash centred on (x, y)
 function dash(x, y, angle, length, weight, colour) {
   stroke(colour);
@@ -123,11 +129,13 @@ function blade(x, y, angle, length, weight, colour) {
 // `bend` (-1 → +1): asymmetric side widths — like a leaf pressed by the wind.
 // `weight`: drives the thin stroke outline (×0.4), adding a painterly soft edge.
 //
-// The nudges come from a hash of the mark's position and angle, not p5's
-// random(): marks are redrawn piecemeal (hover patch, background repaint in
-// sketch.js), so each must keep the same shape every time it's drawn, and
-// drawing must not use up the seeded random() stream the layout comes from.
-function dab(x, y, angle, size, weight, colour, bend = 0) {
+// `shapeSeed` (0–1) fixes the outline. The nudges come from hash01() of this
+// seed, not p5's random(): marks are redrawn piecemeal (hover patch,
+// background repaint in sketch.js), so each must keep the same shape every
+// time it's drawn, and drawing must not use up the seeded random() stream the
+// layout comes from. Pass the seed from a mark's *resting* place so it keeps
+// its shape while the hover moves it; by default it's made from where it's drawn.
+function dab(x, y, angle, size, weight, colour, bend = 0, shapeSeed = hash01(x, y, angle)) {
   fill(colour);
   stroke(colour);
   strokeWeight(max(0.5, weight * 0.4)); // thin outline gives a painterly edge
@@ -137,8 +145,9 @@ function dab(x, y, angle, size, weight, colour, bend = 0) {
   const halfWid = size * 0.42; // wider relative to length → rounder, more blobby
   const bendAmt = bend * size * 0.4;
   const nudge   = size * 0.18; // large nudge → noticeably irregular outline
-  let n = 0;
-  const wobble = () => (dabHash(x, y, angle, n++) * 2 - 1) * nudge; // stable stand-in for a random nudge
+  let nudgeIndex = 0;
+  // stable stand-in for random(-nudge, nudge): same seed → same outline
+  const wobble = () => (hash01(shapeSeed, nudgeIndex++) * 2 - 1) * nudge;
   // four control points in a loose diamond arrangement
   const p0 = [x + alongX * halfLen               + wobble(), y + alongY * halfLen               + wobble()]; // leading tip
   const p1 = [x + perpX * (halfWid + bendAmt)    + wobble(), y + perpY * (halfWid + bendAmt)    + wobble()]; // right side (widened by bend)
@@ -157,10 +166,101 @@ function dab(x, y, angle, size, weight, colour, bend = 0) {
   endShape();
 }
 
-// Repeatable 0–1 number from a dab's position/angle and which nudge it is
-function dabHash(x, y, angle, i) {
-  const v = Math.sin(x * 12.9898 + y * 78.233 + angle * 37.719 + i * 4.581) * 43758.5453;
-  return v - Math.floor(v);
+// ---------------------------------------------------------------------------
+// Number helpers (randomness without p5's random(), easing, falloff)
+// ---------------------------------------------------------------------------
+
+// Repeatable "random-looking" number 0–1 from up to four numbers: the same
+// inputs always give the same result. Used where p5's random() can't be:
+// anything drawn more than once must look the same each time, and must not
+// use up the seeded random() stream the scene layout comes from.
+function hash01(a, b = 0, c = 0, d = 0) {
+  const wave = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719 + d * 4.581) * 43758.5453;
+  return wave - Math.floor(wave); // keep only the fractional part
+}
+
+// Unseeded random number between min and max, for input effects (bursts).
+// Uses Math.random so it never touches p5's seeded random() stream: the
+// scene repaints in the background across several frames, and any p5
+// random() call in between would change its layout.
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+// Ease 0 → 1 with a gentle start and a gentle stop
+function easeInOutSine(progress) {
+  return (1 - Math.cos(Math.PI * progress)) / 2;
+}
+
+// 1 at distance 0, fading smoothly to 0 at `radius` (no hard edge)
+function smoothFalloff(distance, radius) {
+  if (distance >= radius) return 0;
+  const closeness = 1 - distance / radius;
+  return closeness * closeness * (3 - 2 * closeness); // smoothstep
+}
+
+// Move `current` toward `target`, closing most (~63%) of the gap every
+// `seconds`. Frame-rate independent, and it slows down as it arrives, so the
+// motion always looks eased. `deltaSeconds` = time since the last frame.
+function approach(current, target, seconds, deltaSeconds) {
+  if (seconds <= 0) return target;
+  return target + (current - target) * Math.exp(-deltaSeconds / seconds);
+}
+
+// ---------------------------------------------------------------------------
+// Shape tests (rects are { x, y, w, h }, ellipses { x, y, rx, ry })
+// ---------------------------------------------------------------------------
+
+// Is the point inside `rect`, grown by `padding` on every side?
+function pointInRect(x, y, rect, padding = 0) {
+  return (
+    x > rect.x - padding &&
+    x < rect.x + rect.w + padding &&
+    y > rect.y - padding &&
+    y < rect.y + rect.h + padding
+  );
+}
+
+function rectsOverlap(rectA, rectB) {
+  return (
+    rectA.x < rectB.x + rectB.w &&
+    rectA.x + rectA.w > rectB.x &&
+    rectA.y < rectB.y + rectB.h &&
+    rectA.y + rectA.h > rectB.y
+  );
+}
+
+function pointInEllipse(x, y, ellipseArea) {
+  const offsetX = (x - ellipseArea.x) / ellipseArea.rx;
+  const offsetY = (y - ellipseArea.y) / ellipseArea.ry;
+  return offsetX * offsetX + offsetY * offsetY <= 1;
+}
+
+// ---------------------------------------------------------------------------
+// Screen ↔ scene helpers
+// ---------------------------------------------------------------------------
+
+// Window (client) px → scene px, or null when off the canvas. The canvas is
+// CSS-scaled with `object-fit: cover` (style.css), which crops one side; p5's
+// own mouseX doesn't account for that crop.
+function windowToScene(clientX, clientY) {
+  const canvasElement = document.querySelector("canvas");
+  if (!canvasElement) return null;
+  const bounds = canvasElement.getBoundingClientRect();
+  const coverScale = max(bounds.width / width, bounds.height / height);
+  const cropX = (bounds.width - width * coverScale) / 2; // overflow, split evenly
+  const cropY = (bounds.height - height * coverScale) / 2;
+  const sceneX = (clientX - bounds.left - cropX) / coverScale;
+  const sceneY = (clientY - bounds.top - cropY) / coverScale;
+  if (sceneX < 0 || sceneX > width || sceneY < 0 || sceneY > height) return null;
+  return { x: sceneX, y: sceneY };
+}
+
+// Lane scale at screen height y: 0 at the horizon, ~1 near the viewer (the
+// `scale` lane() returns, worked backwards from y). For sizing effects by depth.
+function laneScaleAt(y) {
+  if (!vanishingPoint || y <= vanishingPoint.y) return 0.2;
+  return (y - vanishingPoint.y) / (height - vanishingPoint.y);
 }
 
 // ---------------------------------------------------------------------------
