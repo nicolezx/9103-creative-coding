@@ -64,6 +64,27 @@ const bushSettings = {
   blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
+// Night stars: small crosses in the upper sky (buildStars / drawStars). Their strength rides
+// on palette.star's alpha, so paletteDrifted() repaints the cached scene as they fade.
+const starSettings = {
+  count: 20, // stars at the reference canvas size (scaled by marks()) [whole number ≥ 0]; try 40–250
+  colour: [52, 12, 100], // warm white #FFFCE0, HSB [h 0–360, s/b 0–100]
+  // when they show follows the time-of-day keyframes: _STARS in time.js
+  rainDim: 0.5, // how much full rain dims them: visibility × (1 − rain × this) [0–1, 0 = rain has no effect,
+  //               1 = heavy rain hides them]; try 0.3–0.7. Below 1 so a night shower (the seeded weather
+  //               has one right at the first midnight) only dims the stars instead of wiping them out
+  skyReach: 0.7, // lowest star, as a fraction of the way down to the horizon [0–1]; try 0.5–0.9
+  size: [2.5, 6], // [min, max] arm length of a cross, px at the reference canvas size [> 0, min ≤ max]; try 2–9
+  weight: [0.8, 1.4], // [min, max] line thickness, px [> 0, min ≤ max]; try 0.6–2
+  brightness: [0.35, 1], // [min, max] per-star opacity before the night fade [0–1]; try 0.2–1
+  tilt: 0.25, // max random turn of a star, radians [≥ 0, 0 = all upright]; try 0–0.8
+  diagonalLength: 0.55, // the two diagonal strokes, as a fraction of the main arm [0–1, 0 = plain cross];
+  //                        try 0.4–0.8 (shorter than the arms, so it reads as a sparkle, not an asterisk)
+  twinkleRange: [0.5, 1.4], // [min, max] multiplier on each star's opacity as it twinkles [≥ 0, min ≤ max];
+  //                            try [0.2–0.7, 1–1.6] (below 1 dims, above 1 glows brighter; capped at fully opaque)
+  twinkleSpeed: 0.5, // how fast each star's glow wanders, noise steps per second [> 0]; try 0.2–1.5
+};
+
 // Filled every frame by resolvePalette() (time.js) from colors.js data.
 const palette = {};
 
@@ -93,6 +114,7 @@ let fadeStart = 0; // frameCount when the fade began
 let sceneDirty = true; // repaint immediately, in one go (first frame, seed / debug / resize changes)
 let sceneBushes = []; // Bush objects in draw order, kept for partial redraws
 let sceneTrees = []; // Tree objects in draw order
+let sceneStars = []; // star marks (buildStars), kept for twinkling and partial redraws
 let treePlacements = []; // for the debug labels
 
 // Range the HUD temperature meter spans, in °C [min < max]; spring in
@@ -189,6 +211,7 @@ function draw() {
       getDaylight(),
     ),
   );
+  palette.star = starColour(); // night stars, faded by daylight and rain
 
   vanishingPoint = {
     x: width * perspective.vanishingPointX,
@@ -206,6 +229,7 @@ function draw() {
   }
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
   drawBuffer(buffers.current.scene); // the saved picture
+  drawTwinkle(); // stars glow brighter and dimmer (before the hover patches, which draw their own)
 
   // patches of swaying tree leaves / rustling bush marks, if any (user-input.js)
   for (const swayArea of getSwayAreas()) redrawArea(swayArea);
@@ -236,7 +260,13 @@ function* sceneSteps() {
   drawRoad();
   yield;
   yield* drawGrass();
-  copyBuffer(buffers.pending.scene, buffers.pending.base); // the layer under bushes/trees, for redrawArea
+  copyBuffer(buffers.pending.scene, buffers.pending.base); // the layer under stars/bushes/trees, for redrawArea
+  // stars after the base snapshot (not with the sky), so twinkling and hover
+  // patches can redraw them over a starless sky; still before bushes/trees so
+  // those cover them
+  const stars = buildStars();
+  drawStars(stars);
+  snapshotStarBoxes(stars); // to check later whether anything is painted over each star
   // bushes after the ground so it doesn't cover them, before the trees so they sit in front
   const bushes = buildBushes();
   yield;
@@ -261,7 +291,8 @@ function* sceneSteps() {
     }
   }
   if (debug.treeLabels) drawTreeLabels(placements);
-  return { bushes, trees, placements };
+  findOpenStars(stars); // which stars nothing covers, so they can twinkle (drawTwinkle)
+  return { stars, bushes, trees, placements };
 }
 
 function startRebuild() {
@@ -308,11 +339,12 @@ function drawInto(buffer, drawing) {
 }
 
 // Swap the finished picture on screen and start fading the old one out
-function finishRebuild({ bushes, trees, placements }) {
+function finishRebuild({ stars, bushes, trees, placements }) {
   const { current, pending } = buffers;
   buffers = { ...buffers, current: pending, pending: current }; // swap; keep the patch buffer
   fadeFrom = current.scene;
   fadeStart = frameCount;
+  sceneStars = stars;
   sceneBushes = bushes;
   sceneTrees = trees;
   treePlacements = placements;
@@ -349,6 +381,7 @@ function redrawArea(area) {
   drawInto(buffers.patch, () => {
     withClip(area, () => {
       drawBuffer(buffers.current.base);
+      drawStars(sceneStars, area); // the base has no stars: redraw them here
       for (const bush of sceneBushes)
         if (rectsOverlap(bush.bounds, area)) bush.draw(area);
       for (const tree of sceneTrees)
@@ -410,7 +443,8 @@ function paletteDrifted() {
     const now = palette[key].levels;
     const then = cachedPaletteLevels[key];
     if (!then) return true;
-    for (let i = 0; i < 3; i++) {
+    // alpha too (index 3): palette.star fades in and out through its alpha
+    for (let i = 0; i < 4; i++) {
       if (abs(now[i] - then[i]) > cacheSettings.colourThreshold) return true;
     }
   }
@@ -566,6 +600,151 @@ function drawSky() {
   //       : jitter(gradientColour, 5, 6, 5, 0.7),
   //   );
   // }
+}
+
+// ---------------------------------------------------------------------------
+// Stars
+// ---------------------------------------------------------------------------
+
+// Star colour for this frame, with alpha = how visible stars are (0–1):
+// from the time of day (getStarVisibility in time.js: out all night, gone by
+// 5am, back from late afternoon), dimmed by rain (overcast sky).
+// Kept in the palette so the scene still draws only from palette (AGENTS.md §2).
+function starColour() {
+  const darkness = getStarVisibility();
+  const clearSky = constrain(1 - weather.rain * starSettings.rainDim, 0, 1);
+  const [h, s, b] = starSettings.colour;
+  return color(h, s, b, darkness * darkness * clearSky); // squared: stars come out late in the dusk
+}
+
+// Small four-pointed sparkles scattered over the upper sky, stored as data
+// (like tree foliage) so drawTwinkle and hover patches can redraw them.
+// Positions come from hash01() rather than random(), so they don't shift the
+// seeded random() stream the rest of the scene is laid out from.
+// Each star: { x, y, angle, arm, tall, lineWeight, colour: [h, s, b, a],
+// length (its full extent, for partial redraws), twinkleSeed }.
+function buildStars() {
+  const visibility = alpha(palette.star);
+  if (visibility <= 0) return [];
+  const sizeScale = sqrt(markDensity); // marks() scales counts by area; lengths by width
+  const lowest = vanishingPoint.y * starSettings.skyReach;
+  const [h, s, b] = starSettings.colour;
+  const stars = [];
+  for (let i = 0; i < marks(starSettings.count); i++) {
+    // skewed upward: more stars high up, thinning toward the horizon haze
+    const height01 = pow(hash01(seed, i, 2), 1.6);
+    const fadeNearHorizon = 1 - height01 * 0.6;
+    const arm = lerp(...starSettings.size, hash01(seed, i, 3)) * sizeScale;
+    // a few stars get a slightly longer vertical arm, like a glint
+    const tall = hash01(seed, i, 7) > 0.85 ? 1.4 : 1;
+    const strength =
+      lerp(...starSettings.brightness, hash01(seed, i, 6)) *
+      fadeNearHorizon *
+      visibility;
+    stars.push({
+      x: hash01(seed, i, 1) * width,
+      y: height01 * lowest,
+      angle: (hash01(seed, i, 5) * 2 - 1) * starSettings.tilt,
+      arm,
+      tall,
+      lineWeight: lerp(...starSettings.weight, hash01(seed, i, 4)),
+      // colour fixed at paint time, so a redrawn patch matches the saved
+      // picture even as the live palette drifts (like tree.woodColour)
+      colour: [h, s, b, strength],
+      length: arm * tall,
+      twinkleSeed: hash01(seed, i, 8), // its own place in the twinkle noise, so stars don't pulse in step
+    });
+  }
+  return stars;
+}
+
+// `area` (optional { x, y, w, h }): only draw stars inside it, for partial redraws
+function drawStars(stars, area) {
+  for (const star of stars) {
+    if (area && !pointInRect(star.x, star.y, area, star.length * 2)) continue;
+    drawStarCross(star);
+  }
+}
+
+// One star at its painted opacity × its twinkle now: a cross of two dashes,
+// plus two shorter, slightly thinner diagonals between its arms, so it reads
+// as a sparkle rather than a plus sign
+function drawStarCross(star) {
+  const [h, s, b, a] = star.colour;
+  const colour = color(h, s, b, min(1, a * twinkle(star)));
+  dash(star.x, star.y, star.angle, star.arm, star.lineWeight, colour);
+  dash(star.x, star.y, star.angle + HALF_PI, star.arm * star.tall, star.lineWeight, colour);
+  const diagonal = star.arm * starSettings.diagonalLength;
+  const diagonalWeight = star.lineWeight * 0.75;
+  dash(star.x, star.y, star.angle + QUARTER_PI, diagonal, diagonalWeight, colour);
+  dash(star.x, star.y, star.angle - QUARTER_PI, diagonal, diagonalWeight, colour);
+}
+
+// How bright a star is right now, as a multiplier on its opacity: wanders
+// smoothly and unpredictably between twinkleRange, following p5 noise() over
+// time (each star at its own noise position). Exactly 1 while the cached
+// picture is painted (swayPaused), so the saved picture stays at rest.
+// noise(), not random(): random() would disturb the scene's seeded layout.
+function twinkle(star) {
+  if (swayPaused) return 1;
+  const time = (millis() / 1000) * starSettings.twinkleSpeed;
+  // stretch noise's mostly-middling values so stars reach both ends of the range
+  const wander = constrain((noise(star.twinkleSeed * 1000, time) - 0.3) / 0.4, 0, 1);
+  return lerp(...starSettings.twinkleRange, wander);
+}
+
+// A star's box in raw buffer pixels (padded for line width and anti-aliasing),
+// clamped to the buffer
+function starPixelBox(star, buffer) {
+  const density = buffer.pixelDensity();
+  const reach = (star.arm * star.tall) / 2 + star.lineWeight + 2;
+  const left = max(0, floor((star.x - reach) * density));
+  const top = max(0, floor((star.y - reach) * density));
+  const right = min(buffer.width * density, ceil((star.x + reach) * density));
+  const bottom = min(buffer.height * density, ceil((star.y + reach) * density));
+  return { x: left, y: top, w: max(1, right - left), h: max(1, bottom - top) };
+}
+
+// Right after the stars are painted: keep the pixels around each one
+function snapshotStarBoxes(stars) {
+  const buffer = buffers.pending.scene;
+  for (const star of stars) {
+    star.pixelBox = starPixelBox(star, buffer);
+    const { x, y, w, h } = star.pixelBox;
+    star.pixelsBefore = buffer.drawingContext.getImageData(x, y, w, h).data;
+  }
+}
+
+// Once the whole scene is painted: a star is "open" (can twinkle) only if no
+// bush, tree or label has touched its box. drawTwinkle repaints the box from
+// the starless base layer, which would otherwise erase whatever covers it.
+function findOpenStars(stars) {
+  const context = buffers.pending.scene.drawingContext;
+  for (const star of stars) {
+    const { x, y, w, h } = star.pixelBox;
+    const after = context.getImageData(x, y, w, h).data;
+    const before = star.pixelsBefore;
+    star.open = after.every((value, index) => value === before[index]);
+    star.pixelsBefore = null; // only needed for this check
+  }
+}
+
+// Every frame: each open star's box is restored from the base layer (bare sky,
+// copied pixel for pixel so it matches the picture exactly), then the star is
+// drawn again at its current twinkle. ~150 tiny copies: cheap.
+function drawTwinkle() {
+  if (sceneStars.length === 0) return;
+  const base = buffers.current.base.elt;
+  const context = drawingContext;
+  for (const star of sceneStars) {
+    if (!star.open || star.colour[3] < 0.01) continue; // covered, or too faint to see
+    const { x, y, w, h } = star.pixelBox;
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0); // raw pixels, like drawBuffer
+    context.drawImage(base, x, y, w, h, x, y, w, h);
+    context.restore();
+    drawStarCross(star);
+  }
 }
 
 // ---------------------------------------------------------------------------
