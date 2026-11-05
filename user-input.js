@@ -25,7 +25,7 @@
 // front, as in getRegion), and calms just like the sway.
 //
 // CLICK
-// On a tree or bush, a handful of Burst pieces (blossom / leaf bits) shoot
+// On a tree or bush, a handful of Burst pieces (leaf / bush bits) shoot
 // out from the click; every click also leaves a ring (a ripple on water).
 //
 // Like the planned Interaction layer (AGENTS.md §2), this acts on the scene
@@ -87,6 +87,10 @@ let swayPaused = false;
 // Ring colours per region, as [h, s, b]. Rebuilt every frame from `palette`
 // (updateInputElements) so they follow the time of day and weather.
 let ringColoursByRegion = { tree: [], bush: [], water: [], track: [], sky: [] };
+
+// Burst piece colours per region, as [h, s, b]. Rebuilt every frame from
+// `palette` (updateInputElements), from the leaf and bush roles in colors.js.
+let burstColoursByRegion = { tree: [], bush: [] };
 
 // Hit areas for trees and bushes, filled by registerHitAreas() from
 // finishRebuild() in sketch.js. Stored in draw order (far → near).
@@ -233,7 +237,7 @@ class LeafSway {
 }
 
 // ---------------------------------------------------------------------------
-// Burst: one blossom or leaf piece thrown out from a click
+// Burst: one leaf or bush piece thrown out from a click
 // ---------------------------------------------------------------------------
 class Burst {
   constructor(x, y, colour, size) {
@@ -346,6 +350,15 @@ function rustleBushMark(mark) {
 // (0, 1 or 2 of them; both only briefly, while one calms as the other starts).
 function getSwayAreas() {
   if (!leafSway) return [];
+  // Burst colours: tree pieces use the tree foliage's three passes (bush shadow,
+  // leaf, leafLight; see Tree.buildFoliage), bush pieces the bush role in a
+  // darker / base / lighter shade, like the jittered marks in Bush
+  const bushColour = colourToHsb(palette.bush);
+  burstColoursByRegion = {
+    tree: [palette.bush, palette.leaf, palette.leafLight].map(colourToHsb),
+    bush: [shiftBrightness(bushColour, -10), bushColour, shiftBrightness(bushColour, 10)],
+  };
+
   const deltaSeconds = min(deltaTime, 250) / 1000; // capped so a stall doesn't jump
   const areas = [];
   for (const sway of [leafSway, bushRustle]) {
@@ -440,6 +453,12 @@ function buildLeafCoverage(trees) {
   leafCoverage = { columnCount, rowCount, cells };
 }
 
+// An [h, s, b] colour with its brightness moved by `amount`, kept in 0–100.
+// Done here rather than with jitter(), which calls p5's random().
+function shiftBrightness([hueValue, saturationValue, brightnessValue], amount) {
+  return [hueValue, saturationValue, constrain(brightnessValue + amount, 0, 100)];
+}
+
 // A random ring colour for a region, as [h, s, b]
 function pickRingColour(region) {
   const choices = ringColoursByRegion[region];
@@ -452,11 +471,20 @@ function updateInputElements() {
   // Ring colours are the lighter keys of each region's palette, so they match
   // the current time of day (warm at golden hour, dim at night)
   ringColoursByRegion = {
-    tree: [palette.leafLight, palette.blossomLight, palette.flowerWhite].map(colourToHsb),
-    bush: [palette.grassLight, palette.leafLight, palette.leaf].map(colourToHsb),
+    tree: [palette.leaf, palette.leafLight].map(colourToHsb),
+    bush: [palette.bush].map(colourToHsb).map((bush) => shiftBrightness(bush, 15)),
     water: [palette.cloud, palette.skyLow, palette.flowerWhite].map(colourToHsb), // reflects the sky
     track: [palette.ridge, palette.cloud].map(colourToHsb),
     sky: [palette.cloud, palette.flowerWhite, palette.blossomLight].map(colourToHsb),
+  };
+
+  // Burst colours: tree pieces use the tree foliage's three passes (bush shadow,
+  // leaf, leafLight; see Tree.buildFoliage), bush pieces the bush role in a
+  // darker / base / lighter shade, like the jittered marks in Bush
+  const bushColour = colourToHsb(palette.bush);
+  burstColoursByRegion = {
+    tree: [palette.bush, palette.leaf, palette.leafLight].map(colourToHsb),
+    bush: [shiftBrightness(bushColour, -10), bushColour, shiftBrightness(bushColour, 10)],
   };
 
   const deltaSeconds = min(deltaTime, 250) / 1000; // capped so a stall doesn't teleport pieces
@@ -484,7 +512,7 @@ function updateInputElements() {
   rings = rings.filter((ring) => ring.age < ringLife);
   blendMode(BLEND);
 
-  // Bursts: solid pieces drawn normally so they read as petals, not light
+  // Bursts: solid pieces drawn normally so they read as leaves, not light
   for (const piece of bursts) {
     piece.update(deltaSeconds);
     piece.display();
@@ -515,11 +543,9 @@ function handleInputClick() {
     colour: pickRingColour(region),
   });
 
-  // trees shed blossom and leaves; bushes mostly leaves
-  const colours =
-    region === "tree"
-      ? [palette.blossom, palette.blossomLight, palette.leaf, palette.leafLight]
-      : [palette.leaf, palette.leafLight, palette.grassLight];
+  // pieces use the same colours as the marks they come off (leaf / bush roles
+  // in colors.js, via palette), so they follow the time of day and weather
+  const colours = burstColoursByRegion[region];
   const count = floor(randomBetween(burstCount[0], burstCount[1] + 1));
   // pieces match the stroke that was clicked: small far-off leaves shed small
   // bits, big near ones shed big bits (falls back to depth if there's no mark)
@@ -528,7 +554,7 @@ function handleInputClick() {
     const colour = colours[floor(Math.random() * colours.length)];
     // vary each piece a little, then clamp so no piece passes the max
     const size = constrain(pieceSize * randomBetween(0.7, 1.3), burstPieceMinSize, burstPieceMaxSize);
-    bursts.push(new Burst(point.x, point.y, colourToHsb(colour), size));
+    bursts.push(new Burst(point.x, point.y, colour, size));
   }
 }
 
