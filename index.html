@@ -21,18 +21,39 @@
     <script src="sketch.js"></script>
     <script src="user-input.js"></script>
     <div class="time-display">
-      <div class="time-inner">
+      <div class="display-inner">
         <div class="label-group">
-          <p class="hud-label">Current time&nbsp;</p>
-          <p class="timestamp">&nbsp;</p>
+          <div class="label-between">
+            <p class="hud-label">Current time&nbsp;</p>
+            <p class="timestamp">&nbsp;</p>
+          </div>
+          <div class="meter" data-meter="time">
+            <div class="meter-fill"></div>
+          </div>
         </div>
         <div class="label-group">
-          <p class="hud-label">Temperature&nbsp;</p>
-          <p class="conditions">&nbsp;</p>
+          <div class="label-between">
+            <p class="hud-label">Temperature&nbsp;</p>
+            <p class="temperature">&nbsp;</p>
+          </div>
+          <div class="meter" data-meter="temperature">
+            <div class="meter-fill"></div>
+          </div>
         </div>
         <div class="label-group">
-          <p class="hud-label">Conditions&nbsp;</p>
-          <p class="conditions">&nbsp;</p>
+          <div class="label-between">
+            <p class="hud-label">Moisture&nbsp;</p>
+            <p class="conditions">&nbsp;</p>
+          </div>
+          <div class="meter" data-meter="moisture">
+            <div class="meter-fill"></div>
+          </div>
+        </div>
+        <div class="label-group">
+          <div class="label-between">
+            <p class="hud-label">Conditions&emsp;</p>
+            <p class="conditions">&nbsp;</p>
+          </div>
         </div>
       </div>
     </div>

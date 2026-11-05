@@ -20,11 +20,11 @@ What exists today vs. what the rest of this doc describes as the target design. 
 | Bushes                  | built       | `bushes.js` `Bush`, placed by `drawBushes()` in `sketch.js`                                       |
 | Time of day             | built       | `time.js`: 60 s virtual day (or real clock), 4 colour keyframes, pause                            |
 | Colour pipeline         | built       | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`    |
-| Weather simulation      | planned     | Only `weatherStub.rain` in `sketch.js` (W key cycles 0 / 0.5 / 1). No noise, rain drops, `moisture` or `temperature` yet |
+| Weather simulation      | planned     | Only `weatherStub` in `sketch.js`: `rain` (W key cycles 0 / 0.5 / 1) and a fixed placeholder `temperature`. No noise, rain drops or `moisture` yet |
 | Puddle                  | planned     |                                                                                                   |
 | Interaction / creatures | partial     | `user-input.js`: hover rustle (moves/lightens existing tree + bush marks) + click bursts/rings (`Burst`). No tree shake, reaction table or creatures yet |
 | Render layers / caching | partial     | `sketch.js`: whole scene cached in offscreen buffers, repainted in the background when the palette drifts, cross-faded in; hover patch redrawn live. Runs at `FRAME_RATE` 24. No puddle/rain/atmosphere layers yet |
-| HUD                     | partial     | `index.html` + `style.css`: current time is live; Temperature / Conditions labels are placeholders |
+| HUD                     | partial     | `index.html` + `style.css` + `updateHud()` in `sketch.js`: time and temperature show text + a progress meter (`setMeter()`; time = midnight → midnight, temperature = `temperatureRange` 0–20 °C). Temperature reads the stub value; Conditions label is a placeholder |
 
 ---
 
@@ -71,7 +71,7 @@ If a change needs to break one of these rules, raise it with the team first. Don
 | Value         | Range | Drives                                                                       |
 | ------------- | ----- | ---------------------------------------------------------------------------- |
 | `rain`        | 0 → 1 | Raindrop count, puddle ripples, and the weather palette (dry → overcast → wet) |
-| `temperature` | TBD   | TBD — agree as a team what this drives                                       |
+| `temperature` | 0–20 °C (`temperatureRange`) | HUD meter today; what else it drives is TBD — agree as a team                                       |
 | `moisture`    | 0 → 1 | Puddle size, darker wet ground. Builds while raining, drains when dry        |
 
 - `moisture` is the layer's memory: the puddle follows moisture, not rain, so it lingers after a shower.
@@ -190,9 +190,9 @@ Scripts are plain (non-module) `<script>` tags sharing globals; load order in `i
 | `trees.js`    | `Tree` (recursive bending branches, leaf clumps) + bezier helpers                                          |
 | `bushes.js`   | `Bush` (one blurred undergrowth clump)                                                        |
 | `user-input.js` | Hover rustle (`ColourBlock` touch grid, `hoverTouch()` hook used by `trees.js` / `bushes.js`), click bursts (`Burst`) + rings, region lookup (`getRegion`), tree/bush hit areas, cursor → scene mapping. Settings (`hoverRadius`, `glintDuration`, `columns`, `rows`, …) at the top |
-| `sketch.js`   | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `cacheSettings`, `clock`, `FRAME_RATE`), scene cache + background repaint (`sceneSteps`, `stepRebuild`, `redrawArea`), scene passes, `weatherStub`, input |
-| `index.html`  | Script order + HUD markup (time / temperature / conditions)                                   |
-| `style.css`   | Canvas scaling (cover the window) + HUD styling                                               |
+| `sketch.js`   | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `cacheSettings`, `clock`, `FRAME_RATE`), scene cache + background repaint (`sceneSteps`, `stepRebuild`, `redrawArea`), scene passes, `weatherStub` + `temperatureRange`, HUD (`updateHud`, `setMeter`), input |
+| `index.html`  | Script order + HUD markup (time / temperature / conditions; `.meter[data-meter=…]` bars)                                   |
+| `style.css`   | Canvas scaling (cover the window) + HUD styling, incl. `.meter` (fill width from `--value`)                                               |
 | `assets/`     | Reference image(s) from the series                                                            |
 | `scripts/`    | Old experiments (`set-up.js`, `user-input.js`), commented out in `index.html` — not used      |
 | `TODO.md`     | Per-layer task list                                                                           |
@@ -249,7 +249,7 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 - [ ] Tune the invented GoldenHour / Dusk / Night keyframes (no night references exist)
 - [ ] Give `leaf` its own non-Day keyframes (currently copies grass)
 - [ ] Build the Weather layer: noise-driven `rain`, `moisture`, rain drops; replace `weatherStub`
-- [ ] Decide what `temperature` drives; wire the HUD Temperature / Conditions labels
+- [ ] Decide what `temperature` drives; drive HUD temperature from the Weather layer; wire the Conditions label
 - [ ] Set the composition: vanishing point, road width, tree placement
 - [x] Store tree leaf marks once (`buildFoliage()`)
 - [ ] Redraw trees per frame for sway and shake (only the swaying ones, like `redrawArea()`); re-enable far trees

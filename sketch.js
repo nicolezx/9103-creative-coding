@@ -92,7 +92,12 @@ let treePlacements = []; // for the debug labels
 
 // Temporary stand-in for the Weather layer: `rain` 0–1 picks the weather
 // palette (0 = dry, 0.5 = overcast, 1 = wet). W cycles it for testing.
-const weatherStub = { rain: 0 };
+// `temperature` (°C) is a fixed placeholder until noise drives it.
+const weatherStub = { rain: 0, temperature: 12 };
+
+// Range the HUD temperature meter spans, in °C [min < max]; spring in
+// Yorkshire, roughly 0 at night to 20 on a warm afternoon.
+const temperatureRange = { min: 0, max: 20 };
 let vanishingPoint;
 
 // ---------------------------------------------------------------------------
@@ -115,16 +120,39 @@ const msPerVirtualMinute = (clock.dayLengthSeconds * 1000) / (24 * 60);
 let elapsed, timestampEl, currentTime;
 
 // ---------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------
+
+// Refreshes the HUD text and meters. Runs once per virtual minute (setup()).
+function updateHud() {
+  currentTime = getTimeOfDay();
+  timestampEl.textContent = currentTime;
+  // midnight → midnight fills the bar once, then snaps back to empty
+  setMeter("time", getDayFraction());
+
+  const temperatureEl = document.querySelector("p.temperature");
+  if (temperatureEl)
+    temperatureEl.textContent = `${round(weatherStub.temperature)}°C`;
+  setMeter(
+    "temperature",
+    norm(weatherStub.temperature, temperatureRange.min, temperatureRange.max),
+  );
+}
+
+// Moves a HUD meter (index.html `.meter[data-meter=name]`) to `value` 0–1.
+function setMeter(name, value) {
+  const el = document.querySelector(`.meter[data-meter="${name}"]`);
+  if (el) el.style.setProperty("--value", constrain(value, 0, 1));
+}
+
+// ---------------------------------------------------------------------------
 // p5 lifecycle
 // ---------------------------------------------------------------------------
 function setup() {
   // elapsed = millis();
   timestampEl = document.querySelector("p.timestamp");
   if (timestampEl) {
-    setInterval(() => {
-      currentTime = getTimeOfDay();
-      timestampEl.textContent = currentTime;
-    }, msPerVirtualMinute);
+    setInterval(updateHud, msPerVirtualMinute);
   }
   createCanvas(canvasWidth, canvasHeight);
   pixelDensity(sharpDensity());
