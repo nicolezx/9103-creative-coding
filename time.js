@@ -226,6 +226,20 @@ const _STOPS = [
 // is dark anyway. GoldenHour/Dusk values are a judgement call — tune by eye.
 const _DAYLIGHT = [1, 0.8, 0.4, 0]; // Day, GoldenHour, Dusk, Night
 
+// How visible the stars are at each keyframe, indexed like TIME_KEYFRAMES.
+// Separate from _DAYLIGHT because daylight starts rising right after midnight
+// (Night → Dusk runs 0:00–6:00), which faded the stars out from midnight on.
+// With Dusk still mostly starry, stars stay out all night, fade over the
+// morning on their own clock (_STARS_FADE_OUT, below); in the evening they
+// come back over 15:00 → 18:00 and brighten toward midnight.
+const _STARS = [0, 0, 0.7, 1]; // Day, GoldenHour, Dusk, Night [each 0–1]
+
+// Morning star fade, in hours [0 ≤ start < end < 12]: full stars until
+// `start`, gone by `end`. Its own times rather than a keyframe, because the
+// stops around it (midnight Night, 6:00 Dusk) are too far apart for a quick
+// pre-dawn fade. try start 3–5, end start + 0.5–2
+const _STARS_FADE_OUT = { start: 4, end: 5 };
+
 // The two stops bracketing the current hour, plus the eased position t (0–1)
 // between them. Shared by getTimeBase() and getDaylight() so they always agree.
 function _currentStops() {
@@ -256,10 +270,26 @@ function getTimeBase() {
 
 // 0 (night) → 1 (noon), eased between keyframes the same way as the colours.
 function getDaylight() {
+  return _blendKeyframeValues(_DAYLIGHT);
+}
+
+// 0 (no stars) → 1 (full night sky). Morning: full until _STARS_FADE_OUT.start,
+// then a smoothstepped fade to 0 by its end. Afternoon/evening: eased between
+// keyframes like the colours (_STARS), reaching 1 at midnight, so the two
+// halves meet without a jump.
+function getStarVisibility() {
+  const hour = getDayFraction() * 24;
+  if (hour < 12) {
+    const { start, end } = _STARS_FADE_OUT;
+    return 1 - smoothstepT(constrain((hour - start) / (end - start), 0, 1));
+  }
+  return _blendKeyframeValues(_STARS);
+}
+
+// One number per keyframe (indexed like TIME_KEYFRAMES), blended for the current time
+function _blendKeyframeValues(values) {
   const { stopA, stopB, t } = _currentStops();
-  return (
-    _DAYLIGHT[stopA.idx] + (_DAYLIGHT[stopB.idx] - _DAYLIGHT[stopA.idx]) * t
-  );
+  return values[stopA.idx] + (values[stopB.idx] - values[stopA.idx]) * t;
 }
 
 // ── Weather offset ─────────────────────────────────────────────────────────────
