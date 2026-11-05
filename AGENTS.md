@@ -22,6 +22,7 @@ What exists today vs. what the rest of this doc describes as the target design. 
 | Colour pipeline         | built   | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`                                                                                                                                                                                                                                                                           |
 | Weather simulation      | partial | `noise.js`: precomputed Perlin arrays → `weather.rain`, `weather.moisture`, `weather.temperature` (W toggles on/off). Rain drives the weather palette and `rain.js`                                                                                                                                                                                       |
 | Rain + puddle           | partial | `rain.js`: wavering bezier drops; drops landing on the lane leave blobby ripples + blobby wet patches (none off the lane), multiplied over the road via `puddleLayer` so its texture shows through; half collect at a foreground puddle spot (moves at most once a virtual day, at a random time, once the lane is dry: `updatePuddleSpot()`), so one deep puddle forms, kept `puddleEdgeMargin` inside the road edges (`keepOffEdges()`); its size stops growing past `puddleMaxMoisture`, so very heavy rain deepens it instead, growing and drying with `moisture`. No reflection, muddy rim or cached layer yet |
+| Moon phases             | built   | `moon.js`: organic wobbled disc (noise-perturbed polygon, stable shape) with phase-correct lit area (arc + bezier terminator) and canvas blur; arcs left→right 6 pm–6 am at a low sinusoidal arc; phase advances one of 8 steps at each midnight; drawn as a live patch behind trees via `redrawMoonArea()` in `sketch.js`; settings in `moonSettings`; public API: `getMoonPatch()`, `getMoonPhase()` |
 | Interaction / creatures | partial | `user-input.js`: leaf sway on hover (`LeafSway`, trees only) + click bursts/rings (`Burst`). No tree shake, reaction table or creatures yet                                                                                                                                                                                                                              |
 | Render layers / caching | partial | `sketch.js`: whole scene cached in offscreen buffers, repainted in the background when the palette drifts, cross-faded in; hover patch redrawn live. Runs at `FRAME_RATE` 24. No puddle/rain/atmosphere layers yet                                                                                                                                                       |
 | HUD                     | partial | `index.html` + `style.css` + `updateHud()` in `sketch.js`: time, temperature, humidity and moisture show text + a progress meter (`setMeter()`; time = midnight → midnight, temperature = `temperatureRange` 0–20 °C, humidity / moisture = 0–100 %), read from `weather` (`noise.js`). Conditions shows `getConditions()` (Clear / Cloudy / Light drizzle / Heavy rain) |
@@ -222,6 +223,12 @@ Scripts are plain (non-module) `<script>` tags sharing globals; load order in `i
 | `actors.js` | Birds, ducks, petals, reaction table                                   |
 | `scene.js`  | Puddle reflection, static/live drawing passes                                         |
 
+**Existing (added)**
+
+| File       | Owns                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `moon.js`  | Moon phases: `moonSettings`, phase tracking (`_moonPhaseDay`, `getMoonPhase()`), arc position, organic wobble path, phase lit-area path, `getMoonPatch()` → `{area, draw}` consumed by `redrawMoonArea()` in `sketch.js` |
+
 Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings object (`config.js` once it exists), not inline. Annotate them with `[hard limits]` and a "try" range, like `perspective` in `sketch.js`.
 
 **Keys:**
@@ -275,6 +282,7 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 - [ ] Make a full repaint cheaper (~250 ms of marks) so colour changes during the day cycle can be smoother
 - [ ] Per-mark variant swatches (`VARIANTS` hooks in `colors.js` / `time.js`)
 - [x] Leaf sway on hover, bush rustle on hover and click bursts (`user-input.js`)
+- [x] Moon phases: 8-phase cycle, nightly arc, organic outline, blur (`moon.js` + `redrawMoonArea()` in `sketch.js`)
 - [ ] Interaction: tree shake, reaction table, creatures; add a night reaction (owl or bats)
 - [ ] Puddle: sky/tree reflection, muddy rim, stretched along the lane (today: dark wet patches only)
 - [ ] Move settings + colour data into `config.js`

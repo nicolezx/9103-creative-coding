@@ -133,7 +133,7 @@ const FRAME_RATE = 24; // frames per second. Cheap now the scene is cached (see 
 
 const clock = {
   dayLengthSeconds: minsPerDay * secsPerMin, // 120 s per virtual day
-  startHour: 12, // virtual clock starts at noon
+  startHour: 18, // virtual clock starts at noon
 };
 
 // Real milliseconds per virtual minute (1440 minutes in a day)
@@ -233,9 +233,16 @@ function draw() {
 
   // patches of swaying tree leaves / rustling bush marks, if any (user-input.js)
   for (const swayArea of getSwayAreas()) redrawArea(swayArea);
-  // after the patch, so a cross-fade covers the patch too (otherwise the patch
+  // after the patches, so a cross-fade covers them too (otherwise the patch
   // shows the new colours while the rest is mid-fade: a visible square)
   drawFadingPicture();
+
+  // moon after the cross-fade so palette-drift repaints never blink over it.
+  // The moon's colours are independent of the cached palette, so there is no
+  // new-vs-old colour seam; the softEdge ring blends it into the surrounding sky.
+  const moonPatch = getMoonPatch();
+  if (moonPatch) redrawMoonArea(moonPatch.area, moonPatch.draw);
+
   updateRain(); // puddle patches, splashes, falling drops (rain.js)
   updateInputElements(); // fades the hover, draws rings and bursts on top (user-input.js)
 }
@@ -392,6 +399,25 @@ function redrawArea(area) {
   // 2. fade its rim out, so it blends into the picture with no visible edge
   if (area.softEdge) fadeEdge(buffers.patch, area);
   // 3. copy just that shape onto the canvas
+  withClip(area, () => drawBuffer(buffers.patch));
+}
+
+// Like redrawArea but inserts `moonDrawFn()` between the star layer and the
+// bush/tree layers, so the moon appears behind vegetation (AGENTS.md §5).
+function redrawMoonArea(area, moonDrawFn) {
+  drawInto(buffers.patch, () => {
+    withClip(area, () => {
+      drawBuffer(buffers.current.base);
+      drawStars(sceneStars, area);
+      moonDrawFn(); // moon behind trees
+      for (const bush of sceneBushes)
+        if (rectsOverlap(bush.bounds, area)) bush.draw(area);
+      for (const tree of sceneTrees)
+        if (rectsOverlap(tree.bounds, area)) tree.draw(area);
+      if (debug.treeLabels) drawTreeLabels(treePlacements);
+    });
+  });
+  if (area.softEdge) fadeEdge(buffers.patch, area);
   withClip(area, () => drawBuffer(buffers.patch));
 }
 
