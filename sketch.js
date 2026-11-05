@@ -64,6 +64,12 @@ const bushSettings = {
   blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
+// Road surface dashes (drawRoad).
+const roadSettings = {
+  markWeight: [1, 7.5], // [far, near] dash thickness, px: blended by lane() scale, so marks thin out
+  //                       toward the vanishing point [> 0, far ≤ near]; try [0.6–1.5, 4–9] (was [0.6, 4.5])
+};
+
 // Night stars: small crosses in the upper sky (buildStars / drawStars). Their strength rides
 // on palette.star's alpha, so paletteDrifted() repaints the cached scene as they fade.
 const starSettings = {
@@ -73,6 +79,8 @@ const starSettings = {
   rainDim: 0.5, // how much full rain dims them: visibility × (1 − rain × this) [0–1, 0 = rain has no effect,
   //               1 = heavy rain hides them]; try 0.3–0.7. Below 1 so a night shower (the seeded weather
   //               has one right at the first midnight) only dims the stars instead of wiping them out
+  scatter: 0.7, // how far each star may wander inside its own grid cell [0–1, 0 = a rigid grid, 1 = anywhere
+  //              in the cell, so neighbours can touch at cell edges]; try 0.5–0.8
   skyReach: 0.7, // lowest star, as a fraction of the way down to the horizon [0–1]; try 0.5–0.9
   size: [2.5, 6], // [min, max] arm length of a cross, px at the reference canvas size [> 0, min ≤ max]; try 2–9
   weight: [0.8, 1.4], // [min, max] line thickness, px [> 0, min ≤ max]; try 0.6–2
@@ -656,10 +664,23 @@ function buildStars() {
   const lowest = vanishingPoint.y * starSettings.skyReach;
   const [h, s, b] = starSettings.colour;
   const stars = [];
-  for (let i = 0; i < marks(starSettings.count); i++) {
-    // skewed upward: more stars high up, thinning toward the horizon haze
-    const height01 = pow(hash01(seed, i, 2), 1.6);
-    const fadeNearHorizon = 1 - height01 * 0.6;
+  // Evenly spread: split the star band into a grid of roughly square cells,
+  // one star per cell, nudged randomly inside it (jittered grid). Plain random
+  // positions clump and leave big empty patches; this keeps the scatter loose
+  // but never lets two stars bunch up or a stretch of sky go bare.
+  const wanted = max(1, marks(starSettings.count));
+  const columns = max(1, round(sqrt((wanted * width) / lowest)));
+  const rows = max(1, round(wanted / columns));
+  const cellW = width / columns;
+  const cellH = lowest / rows;
+  const margin = (1 - starSettings.scatter) / 2; // keep this fraction of the cell clear on each side
+  for (let i = 0; i < columns * rows; i++) {
+    const column = i % columns;
+    const row = floor(i / columns);
+    const x = (column + margin + hash01(seed, i, 1) * starSettings.scatter) * cellW;
+    const y = (row + margin + hash01(seed, i, 2) * starSettings.scatter) * cellH;
+    const height01 = y / lowest; // 0 = top of the sky, 1 = lowest star
+    const fadeNearHorizon = 1 - height01 * 0.6; // thinning toward the horizon haze
     const arm = lerp(...starSettings.size, hash01(seed, i, 3)) * sizeScale;
     // a few stars get a slightly longer vertical arm, like a glint
     const tall = hash01(seed, i, 7) > 0.85 ? 1.4 : 1;
@@ -668,8 +689,8 @@ function buildStars() {
       fadeNearHorizon *
       visibility;
     stars.push({
-      x: hash01(seed, i, 1) * width,
-      y: height01 * lowest,
+      x,
+      y,
       angle: (hash01(seed, i, 5) * 2 - 1) * starSettings.tilt,
       arm,
       tall,
@@ -839,7 +860,7 @@ function drawRoad() {
         point.y,
         angle + random(-0.08, 0.08),
         lerp(2, 24, point.scale) * random(0.6, 1.3),
-        lerp(0.6, 4.5, point.scale),
+        lerp(...roadSettings.markWeight, point.scale),
         jitter(colour, hueRange, saturationRange, brightnessRange),
       );
     }

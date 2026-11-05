@@ -26,7 +26,7 @@
 //
 // CLICK
 // On a tree or bush, a handful of Burst pieces (leaf / bush bits) shoot
-// out from the click; every click also leaves a ring (a ripple on water).
+// out from the click;
 //
 // Like the planned Interaction layer (AGENTS.md §2), this acts on the scene
 // directly and only *reads* `palette`. It never changes time or weather.
@@ -168,6 +168,7 @@ class LeafSway {
   // { centreX, centreY, radius, softEdge } plus its bounding box { x, y, w, h }.
   // It's as small as possible while still holding every moving leaf; the soft
   // edge fades out *beyond* the moving leaves, so none is ever cut or faded.
+  // Written by the Claude AI plugin for VS Code
   getArea() {
     if (this.strength === 0) return null;
     const softEdge = this.settings.edgeSoftness;
@@ -259,6 +260,7 @@ class Burst {
   }
 
   // deltaSeconds = time since the last frame, so motion is the same at any frame rate
+  // Written by the Claude AI plugin for VS Code
   update(deltaSeconds) {
     this.age += deltaSeconds * 1000;
     if (this.age > burstLife) {
@@ -398,22 +400,6 @@ function getHit(x, y) {
   return { region: groundRegion(x, y), mark: null };
 }
 
-// Sky or ground (no tree or bush): "sky", "verge", "water" or "track"
-function groundRegion(x, y) {
-  if (!vanishingPoint || y < vanishingPoint.y) return "sky";
-
-  // Work lane() backwards: screen y → `along`, then compare x with the road edges
-  const scale = (y - vanishingPoint.y) / ((height - vanishingPoint.y) * perspective.zoom);
-  const along = pow(constrain(1 - scale, 0, 1), 1 / perspective.compression);
-  const roadLeft = lane(along, leftEdge(along)).x;
-  const roadRight = lane(along, rightEdge(along)).x;
-  const across = (x - roadLeft) / (roadRight - roadLeft);
-  if (across < 0 || across > 1) return "verge"; // open grass beside the road, outside any bush
-  // The tyre ruts (same bands drawRoad() paints) hold rainwater in the
-  // paintings, so they ripple like water; the rest is dry track.
-  const inRut = (across > 0.22 && across < 0.36) || (across > 0.64 && across < 0.78);
-  return inRut ? "water" : "track";
-}
 
 // Is (x, y) on a tree's leaves? Looks it up in the leaf coverage grid.
 function isOverTreeLeaves(x, y) {
@@ -473,9 +459,6 @@ function updateInputElements() {
   ringColoursByRegion = {
     tree: [palette.leaf, palette.leafLight].map(colourToHsb),
     bush: [palette.bush].map(colourToHsb).map((bush) => shiftBrightness(bush, 15)),
-    water: [palette.cloud, palette.skyLow, palette.flowerWhite].map(colourToHsb), // reflects the sky
-    track: [palette.ridge, palette.cloud].map(colourToHsb),
-    sky: [palette.cloud, palette.flowerWhite, palette.blossomLight].map(colourToHsb),
   };
 
   // Burst colours: tree pieces use the tree foliage's three passes (bush shadow,
@@ -534,15 +517,6 @@ function handleInputClick() {
   if (!isPaintedOverBase(point.x, point.y)) return;
   const depthScale = laneScaleAt(point.y);
 
-  rings.push({
-    x: point.x,
-    y: point.y,
-    depthScale,
-    age: 0,
-    isWater: region === "water",
-    colour: pickRingColour(region),
-  });
-
   // pieces use the same colours as the marks they come off (leaf / bush roles
   // in colors.js, via palette), so they follow the time of day and weather
   const colours = burstColoursByRegion[region];
@@ -578,6 +552,7 @@ function registerHitAreas(kind, objects) {
 // The tree's leaf marks (checked one by one, see findLeafAt), its bounds
 // (to skip trees nowhere near), and the trunk as a thin box from the base to
 // the trunk top
+// Written by the Claude AI plugin for VS Code
 function treeHitArea(tree) {
   return {
     leaves: tree.foliage || [],
