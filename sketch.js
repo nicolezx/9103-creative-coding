@@ -39,7 +39,7 @@ const perspective = {
 const treeSettings = {
   sizeFactor: [1.45, 2], // [min, max] tree height as a fraction of canvas height at lane scale 1 [> 0, min ≤ max]; try 0.8–2.5
   clumpsPerBranch: [2, 4], // [min, max] leaf clumps on each outer branch [≥ 0, min ≤ max]; try 0–5
-  clumpSize: [0.3, 0.55], // [min, max] clump radius as a fraction of its branch's length [> 0]; try 0.15–0.7
+  clumpSize: [0.3, 0.4], // [min, max] clump radius as a fraction of its branch's length [> 0]; try 0.15–0.7
   leafMarksPerClump: 90, // dabs per clump on the nearest trees (far trees get fewer) [whole number ≥ 0, higher = denser but slower]; try 30–150
   leafMarkLength: 0.4, // dab length as a fraction of clump radius [> 0]; try 0.15–0.5
 };

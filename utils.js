@@ -101,27 +101,6 @@ function dash(x, y, angle, length, weight, colour) {
   line(x - offsetX, y - offsetY, x + offsetX, y + offsetY);
 }
 
-// Curved dab centred on (x, y): like dash() but bowed sideways. `bend` is how
-// far the middle bows, as a fraction of length (+/- picks the side; 0 = straight)
-function dab(x, y, angle, length, weight, colour, bend) {
-  stroke(colour);
-  strokeWeight(weight);
-  noFill(); // the curve is stroke-only; otherwise p5 fills the bowed area
-  const offsetX = (cos(angle) * length) / 2;
-  const offsetY = (sin(angle) * length) / 2;
-  // a quadratic's midpoint sits halfway to its control point, so push the
-  // control point twice the wanted bow out along the perpendicular
-  const bow = bend * length * 2;
-  beginShape();
-  vertex(x - offsetX, y - offsetY);
-  quadraticVertex(
-    x - sin(angle) * bow,
-    y + cos(angle) * bow,
-    x + offsetX,
-    y + offsetY,
-  );
-  endShape();
-}
 
 // Tapered blade: thick lower half, thin upper half with a slight bend
 function blade(x, y, angle, length, weight, colour) {
@@ -133,6 +112,42 @@ function blade(x, y, angle, length, weight, colour) {
   line(x, y, midX, midY);
   strokeWeight(weight * 0.45);
   line(midX, midY, x + cos(tipAngle) * length, y + sin(tipAngle) * length);
+}
+
+// Organic blobby leaf dab — for leaf clusters and foliage accents.
+// Four control points are arranged loosely in a diamond, then connected with
+// Catmull-Rom splines (curveVertex) so there are no straight edges or sharp
+// corners. `bend` widens one side of the blob and narrows the other; large
+// per-vertex nudges give every mark a unique, irregular silhouette.
+//
+// `bend` (-1 → +1): asymmetric side widths — like a leaf pressed by the wind.
+// `weight`: drives the thin stroke outline (×0.4), adding a painterly soft edge.
+function dab(x, y, angle, size, weight, colour, bend = 0) {
+  fill(colour);
+  stroke(colour);
+  strokeWeight(max(0.5, weight * 0.4)); // thin outline gives a painterly edge
+  const alongX = cos(angle),  alongY = sin(angle);
+  const perpX  = -sin(angle), perpY  = cos(angle);
+  const halfLen = size / 2;
+  const halfWid = size * 0.42; // wider relative to length → rounder, more blobby
+  const bendAmt = bend * size * 0.4;
+  const nudge   = size * 0.18; // large nudge → noticeably irregular outline
+  // four control points in a loose diamond arrangement
+  const p0 = [x + alongX * halfLen               + random(-nudge, nudge), y + alongY * halfLen               + random(-nudge, nudge)]; // leading tip
+  const p1 = [x + perpX * (halfWid + bendAmt)    + random(-nudge, nudge), y + perpY * (halfWid + bendAmt)    + random(-nudge, nudge)]; // right side (widened by bend)
+  const p2 = [x - alongX * halfLen               + random(-nudge, nudge), y - alongY * halfLen               + random(-nudge, nudge)]; // trailing tip
+  const p3 = [x - perpX * (halfWid - bendAmt)    + random(-nudge, nudge), y - perpY * (halfWid - bendAmt)    + random(-nudge, nudge)]; // left side (narrowed by bend)
+  // Catmull-Rom closed curve: repeat the last point as a phantom before the
+  // start and the first point as a phantom after the end so the curve closes
+  // smoothly with no seam. endShape() without CLOSE avoids a straight closing line.
+  beginShape();
+  curveVertex(...p3); // phantom start (= last point)
+  curveVertex(...p0);
+  curveVertex(...p1);
+  curveVertex(...p2);
+  curveVertex(...p3);
+  curveVertex(...p0); // phantom end (= first point)
+  endShape();
 }
 
 // ---------------------------------------------------------------------------
