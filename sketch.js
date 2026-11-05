@@ -90,11 +90,6 @@ let sceneBushes = []; // Bush objects in draw order, kept for partial redraws
 let sceneTrees = []; // Tree objects in draw order
 let treePlacements = []; // for the debug labels
 
-// Temporary stand-in for the Weather layer: `rain` 0–1 picks the weather
-// palette (0 = dry, 0.5 = overcast, 1 = wet). W cycles it for testing.
-// `temperature` (°C) is a fixed placeholder until noise drives it.
-const weatherStub = { rain: 0, temperature: 12 };
-
 // Range the HUD temperature meter spans, in °C [min < max]; spring in
 // Yorkshire, roughly 0 at night to 20 on a warm afternoon.
 const temperatureRange = { min: 0, max: 20 };
@@ -106,7 +101,7 @@ let vanishingPoint;
 
 const hoursPerDay = 24;
 const secsPerMin = 60;
-const minsPerDay = 1; // real minutes for one virtual day (1 × 60 = 60 s)
+const minsPerDay = 2; // real minutes for one virtual day (1 × 60 = 60 s)
 const FRAME_RATE = 24; // frames per second. Cheap now the scene is cached (see cacheSettings); try 15–30
 
 const clock = {
@@ -132,11 +127,22 @@ function updateHud() {
 
   const temperatureEl = document.querySelector("p.temperature");
   if (temperatureEl)
-    temperatureEl.textContent = `${round(weatherStub.temperature)}°C`;
+    temperatureEl.textContent = `${round(weather.temperature)}°C`;
   setMeter(
     "temperature",
-    norm(weatherStub.temperature, temperatureRange.min, temperatureRange.max),
+    norm(weather.temperature, temperatureRange.min, temperatureRange.max),
   );
+
+  const humidityEl = document.querySelector("p.humidity");
+  if (humidityEl) humidityEl.textContent = `${round(weather.humidity * 100)}%`;
+  setMeter("humidity", weather.humidity);
+
+  const moistureEl = document.querySelector("p.moisture");
+  if (moistureEl) moistureEl.textContent = `${round(weather.moisture * 100)}%`;
+
+  const conditionsEl = document.querySelector("p.conditions");
+  if (conditionsEl) conditionsEl.textContent = getConditions();
+  setMeter("moisture", weather.moisture);
 }
 
 // Moves a HUD meter (index.html `.meter[data-meter=name]`) to `value` 0–1.
@@ -161,9 +167,12 @@ function setup() {
   strokeCap(ROUND);
   frameRate(FRAME_RATE); // see FRAME_RATE near the clock settings above
   setupInputElements(); // leaf sway on hover + click bursts (user-input.js)
+  setupWeather(); // precompute the weather noise arrays (noise.js)
 }
 
 function draw() {
+  updateWeather(); // rain, moisture, temperature for this frame (noise.js)
+
   // Update every palette entry for the current time of day and weather.
   // Time and weather only meet here (AGENTS.md §2): either works with the
   // other switched off (rain = 0 → no weather offset).
@@ -171,7 +180,7 @@ function draw() {
     palette,
     resolvePalette(
       getTimeBase(),
-      getWeatherOffset(weatherStub.rain),
+      getWeatherOffset(weather.rain),
       getDaylight(),
     ),
   );
@@ -334,8 +343,10 @@ function redrawArea(area) {
   drawInto(buffers.patch, () => {
     withClip(area, () => {
       drawBuffer(buffers.current.base);
-      for (const bush of sceneBushes) if (rectsOverlap(bush.bounds, area)) bush.draw(area);
-      for (const tree of sceneTrees) if (rectsOverlap(tree.bounds, area)) tree.draw(area);
+      for (const bush of sceneBushes)
+        if (rectsOverlap(bush.bounds, area)) bush.draw(area);
+      for (const tree of sceneTrees)
+        if (rectsOverlap(tree.bounds, area)) tree.draw(area);
       if (debug.treeLabels) drawTreeLabels(treePlacements);
     });
   });
@@ -351,7 +362,14 @@ function redrawArea(area) {
 function fadeEdge(buffer, area) {
   const context = buffer.drawingContext;
   const { centreX, centreY, radius, softEdge } = area;
-  const gradient = context.createRadialGradient(centreX, centreY, radius - softEdge, centreX, centreY, radius);
+  const gradient = context.createRadialGradient(
+    centreX,
+    centreY,
+    radius - softEdge,
+    centreX,
+    centreY,
+    radius,
+  );
   gradient.addColorStop(0, "rgba(0, 0, 0, 1)"); // fully kept inside
   gradient.addColorStop(1, "rgba(0, 0, 0, 0)"); // gone at the edge
   context.save();
@@ -367,7 +385,8 @@ function withClip(area, drawing) {
   const context = drawingContext;
   context.save();
   context.beginPath();
-  if (area.radius) context.arc(area.centreX, area.centreY, area.radius, 0, TWO_PI);
+  if (area.radius)
+    context.arc(area.centreX, area.centreY, area.radius, 0, TWO_PI);
   else context.rect(area.x, area.y, area.w, area.h);
   context.clip();
   try {
@@ -394,13 +413,17 @@ function paletteDrifted() {
 
 function paletteSnapshot() {
   return Object.fromEntries(
-    Object.entries(palette).map(([key, colour]) => [key, colour.levels.slice()]),
+    Object.entries(palette).map(([key, colour]) => [
+      key,
+      colour.levels.slice(),
+    ]),
   );
 }
 
 // (Re)make the five offscreen buffers (2 × scene + base, 1 patch) when missing or the pixel density changed
 function ensureBuffers() {
-  if (buffers && buffers.current.scene.pixelDensity() === pixelDensity()) return;
+  if (buffers && buffers.current.scene.pixelDensity() === pixelDensity())
+    return;
   if (buffers) {
     for (const set of [buffers.current, buffers.pending]) {
       set.scene.remove();
@@ -446,7 +469,6 @@ function drawBuffer(buffer) {
   context.restore();
 }
 
-
 function mousePressed() {
   handleInputClick(); // bursts from trees/bushes, rings everywhere (user-input.js)
 }
@@ -465,8 +487,7 @@ function keyPressed() {
     redraw();
   }
   if (key === "w" || key === "W") {
-    // cycle dry → overcast → wet (temporary until the Weather layer exists)
-    weatherStub.rain = (weatherStub.rain + 0.5) % 1.5;
+    toggleWeather(); // noise weather on / off (off = dry, mean temperature; noise.js)
   }
   if (key === "t" || key === "T") useRealClock = !useRealClock; // toggle virtual ↔ real clock (AGENTS.md debug key)
   if (key === "p" || key === "P") togglePause(); // freeze / resume the time of day
