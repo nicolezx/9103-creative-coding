@@ -527,6 +527,9 @@ function keyPressed() {
   }
   if (key === "t" || key === "T") useRealClock = !useRealClock; // toggle virtual ↔ real clock (AGENTS.md debug key)
   if (key === "p" || key === "P") togglePause(); // freeze / resume the time of day
+  // pause and jump to the next / previous full hour (time.js stepHour)
+  if (keyCode === RIGHT_ARROW) stepHour(1);
+  if (keyCode === LEFT_ARROW) stepHour(-1);
 }
 
 // ---------------------------------------------------------------------------

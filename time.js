@@ -4,21 +4,38 @@
 let useRealClock = false;
 
 // Pause state, toggled with the 'p' key via togglePause(). While paused the
-// day fraction is frozen; pausedMs accumulates time spent paused so the
-// virtual clock resumes from the same moment instead of jumping ahead.
+// day fraction is frozen at pausedFraction (stepHour() moves it by whole
+// hours); on resume pausedMs is reset so the virtual clock carries on from
+// that moment instead of jumping ahead.
 let paused = false;
 let pausedFraction = 0; // day fraction captured at the moment of pausing
 let pauseStartMs = 0;
-let pausedMs = 0; // total ms spent paused, subtracted from millis()
+let pausedMs = 0; // offset subtracted from millis(): time spent paused, plus any stepHour() jumps
 
 function togglePause() {
   if (!paused) {
     pausedFraction = getDayFraction();
     pauseStartMs = millis();
   } else {
-    pausedMs += millis() - pauseStartMs;
+    // resume from the paused moment, which stepHour() may have moved: pick
+    // pausedMs so the virtual clock formula lands exactly on pausedFraction
+    const sinceStart = (((pausedFraction - clock.startHour / 24) % 1) + 1) % 1;
+    // (1 ms extra so float rounding can't land a hair before the hour: 12:59)
+    pausedMs = millis() - sinceStart * clock.dayLengthSeconds * 1000 - 1;
   }
   paused = !paused;
+}
+
+// Jump to the next (direction = 1) or previous (−1) full hour, pausing the
+// clock first so the time stays there; P resumes from it. Bound to the
+// right / left arrow keys (sketch.js keyPressed). Wraps at midnight.
+function stepHour(direction) {
+  if (!paused) togglePause();
+  const hour = pausedFraction * 24;
+  // the small margin makes a press from exactly 3:00 go to 4:00 / 2:00, and
+  // one from 2:59.999 (float drift) go to 4:00, not 3:00
+  const target = direction > 0 ? Math.floor(hour + 0.001) + 1 : Math.ceil(hour - 0.001) - 1;
+  pausedFraction = (((target % 24) + 24) % 24) / 24;
 }
 
 // Raw 0–1 position in the virtual day, continuous and fractional.
