@@ -98,10 +98,9 @@ class Bush {
   }
 
   drawMarks(area) {
-    for (const stored of this.marks) {
-      if (area && !markInArea(stored, area)) continue;
-      // hover: marks near the cursor are pushed/lightened (user-input.js)
-      const mark = hoverTouch(stored, "bush");
+    for (const mark of this.marks) {
+      // partial redraw: skip marks outside the area (padded by the mark's size)
+      if (area && !pointInRect(mark.x, mark.y, area, mark.length * 2)) continue;
       if (mark.bend === 0) {
         dash(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour);
       } else {

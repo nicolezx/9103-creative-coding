@@ -132,7 +132,7 @@ function setup() {
   strokeWeight(3);
   strokeCap(ROUND);
   frameRate(FRAME_RATE); // see FRAME_RATE near the clock settings above
-  setupInputElements(); // hover glints + click bursts (user-input.js)
+  setupInputElements(); // leaf sway on hover + click bursts (user-input.js)
 }
 
 function draw() {
@@ -165,8 +165,8 @@ function draw() {
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
   drawPicture();
 
-  const touched = getTouchedArea(); // hovered patch, if any (user-input.js)
-  if (touched) redrawArea(touched);
+  const swayArea = getSwayArea(); // patch of swaying leaves, if any (user-input.js)
+  if (swayArea) redrawArea(swayArea);
   updateInputElements(); // fades the hover, draws rings and bursts on top (user-input.js)
 }
 
@@ -178,6 +178,10 @@ function draw() {
 function* sceneSteps() {
   randomSeed(seed);
   noiseSeed(seed);
+  // solid base first: the sky's 1 px gradient lines only cover ~75% of each
+  // pixel, which left the picture slightly see-through (redrawn patches then
+  // showed the scene through them as a faint box)
+  background(palette.skyTop);
   drawSky();
   noStroke();
   fill(palette.grass);
@@ -229,7 +233,7 @@ function stepRebuild(budgetMs) {
   const mainContext = drawingContext;
   instance._renderer = buffers.pending.scene._renderer;
   drawingContext = buffers.pending.scene.drawingContext; // bushes.js uses it for the blur
-  hoverPaused = true; // keep the picture clean: hover is drawn on top by redrawArea()
+  swayPaused = true; // keep the picture clean: swaying leaves are drawn on top by redrawArea()
   try {
     while (true) {
       const step = rebuild.next();
@@ -242,7 +246,7 @@ function stepRebuild(budgetMs) {
   } finally {
     instance._renderer = mainRenderer;
     drawingContext = mainContext;
-    hoverPaused = false;
+    swayPaused = false;
   }
 }
 
@@ -284,8 +288,8 @@ function redrawArea(area) {
   ctx.rect(area.x, area.y, area.w, area.h);
   ctx.clip();
   drawBuffer(buffers.current.base);
-  for (const bush of sceneBushes) if (overlaps(bush.bounds, area)) bush.draw(area);
-  for (const tree of sceneTrees) if (overlaps(tree.bounds, area)) tree.draw(area);
+  for (const bush of sceneBushes) if (rectsOverlap(bush.bounds, area)) bush.draw(area);
+  for (const tree of sceneTrees) if (rectsOverlap(tree.bounds, area)) tree.draw(area);
   if (debug.treeLabels) drawTreeLabels(treePlacements);
   ctx.restore();
 }
@@ -350,21 +354,6 @@ function drawBuffer(buffer) {
   drawingContext.drawImage(buffer.elt, 0, 0, width, height);
 }
 
-// Could this mark ({ x, y, length }) touch `area`? Padded by two lengths:
-// one for the mark itself, one for how far the hover can push it
-function markInArea(mark, area) {
-  const pad = mark.length * 2;
-  return (
-    mark.x > area.x - pad &&
-    mark.x < area.x + area.w + pad &&
-    mark.y > area.y - pad &&
-    mark.y < area.y + area.h + pad
-  );
-}
-
-function overlaps(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
 
 function mousePressed() {
   handleInputClick(); // bursts from trees/bushes, rings everywhere (user-input.js)

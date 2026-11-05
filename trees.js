@@ -205,14 +205,16 @@ class Tree {
   }
   // Leaf / blossom marks (generated once in buildFoliage), optionally only
   // those inside `area`, and/or only marks [from, to) so a background repaint
-  // can split a big tree across frames. hoverTouch (user-input.js)
-  // moves/lightens the marks near the cursor
+  // can split a big tree across frames. swayLeaf (user-input.js) moves the
+  // leaves near the cursor; each keeps its own outline (shapeSeed) as it moves
   drawLeaves(area, from = 0, to = this.foliage.length) {
-    for (let i = from; i < min(to, this.foliage.length); i++) {
-      const stored = this.foliage[i];
-      if (area && !markInArea(stored, area)) continue;
-      const mark = hoverTouch(stored, "tree");
-      dab(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour, mark.bend);
+    for (let index = from; index < min(to, this.foliage.length); index++) {
+      const restingLeaf = this.foliage[index];
+      // skip leaves outside the area (padded by two lengths: the leaf's own
+      // size plus room for the sway)
+      if (area && !pointInRect(restingLeaf.x, restingLeaf.y, area, restingLeaf.length * 2)) continue;
+      const leaf = swayLeaf(restingLeaf);
+      dab(leaf.x, leaf.y, leaf.angle, leaf.length, leaf.weight, leaf.colour, leaf.bend, restingLeaf.shapeSeed);
     }
   }
   // Leaf clumps: a few rounded clusters of dabs along each outer branch.
@@ -271,7 +273,7 @@ class Tree {
           // length, colour (jitter), bend.
           const angle = random(TWO_PI);
           const r = sqrt(random()) * clump.radius;
-          this.foliage.push({
+          const leaf = {
             x: clump.x + cos(angle) * r,
             y: clump.y + sin(angle) * r * 0.8 + passLift[pass] * clump.radius,
             angle: random(TWO_PI),
@@ -279,7 +281,11 @@ class Tree {
             weight: max(1.2, markLength * 0.6),
             colour: jitter(colours[pass], 8, 10, 10),
             bend: random(-0.2, 0.2), // each diamond leans a different direction
-          });
+          };
+          // fixed outline from the resting place (a hash, not random(), so
+          // the layout's random() order is unchanged)
+          leaf.shapeSeed = hash01(leaf.x, leaf.y, leaf.angle);
+          this.foliage.push(leaf);
         }
       }
     }
