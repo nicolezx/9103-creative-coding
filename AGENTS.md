@@ -12,19 +12,19 @@ Shared context for everyone on the team **and** any AI coding agent (Claude Code
 
 What exists today vs. what the rest of this doc describes as the target design. Sections below are marked **(built)**, **(partial)** or **(planned)**.
 
-| Area                    | Status      | Where / notes                                                                                     |
-| ----------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
-| Base scene              | built       | `sketch.js`: sky gradient, road + tyre tracks, grass verges, flower dots, bushes, trees           |
-| Perspective (`lane()`)  | built       | `utils.js`; tuned via `perspective` in `sketch.js`                                                |
-| Trees                   | partial     | `trees.js` `Tree`: recursive bending branches + stored leaf/blossom dab clusters (`buildFoliage()`). Rebuilt from the seed on each repaint; far-tree crown written (`drawFar()`) but `this.far` still disabled; no sway/shake yet |
-| Bushes                  | built       | `bushes.js` `Bush`, placed by `drawBushes()` in `sketch.js`                                       |
-| Time of day             | built       | `time.js`: 60 s virtual day (or real clock), 4 colour keyframes, pause                            |
-| Colour pipeline         | built       | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`    |
-| Weather simulation      | planned     | Only `weatherStub` in `sketch.js`: `rain` (W key cycles 0 / 0.5 / 1) and a fixed placeholder `temperature`. No noise, rain drops or `moisture` yet |
-| Puddle                  | planned     |                                                                                                   |
-| Interaction / creatures | partial     | `user-input.js`: leaf sway on hover over trees + bush rustle on hover over bushes (two `LeafSway` instances) + click bursts/rings (`Burst`). No tree shake, reaction table or creatures yet |
-| Render layers / caching | partial     | `sketch.js`: whole scene cached in offscreen buffers, repainted in the background when the palette drifts, cross-faded in; hover patch redrawn live. Runs at `FRAME_RATE` 24. No puddle/rain/atmosphere layers yet |
-| HUD                     | partial     | `index.html` + `style.css` + `updateHud()` in `sketch.js`: time and temperature show text + a progress meter (`setMeter()`; time = midnight → midnight, temperature = `temperatureRange` 0–20 °C). Temperature reads the stub value; Conditions label is a placeholder |
+| Area                    | Status  | Where / notes                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Base scene              | built   | `sketch.js`: sky gradient, road + tyre tracks, grass verges, flower dots, bushes, trees                                                                                                                                                                                                                                                                                  |
+| Perspective (`lane()`)  | built   | `utils.js`; tuned via `perspective` in `sketch.js`                                                                                                                                                                                                                                                                                                                       |
+| Trees                   | partial | `trees.js` `Tree`: recursive bending branches + stored leaf/blossom dab clusters (`buildFoliage()`). Rebuilt from the seed on each repaint; far-tree crown written (`drawFar()`) but `this.far` still disabled; no sway/shake yet                                                                                                                                        |
+| Bushes                  | built   | `bushes.js` `Bush`, placed by `drawBushes()` in `sketch.js`                                                                                                                                                                                                                                                                                                              |
+| Time of day             | built   | `time.js`: 60 s virtual day (or real clock), 4 colour keyframes, pause                                                                                                                                                                                                                                                                                                   |
+| Colour pipeline         | built   | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`                                                                                                                                                                                                                                                                           |
+| Weather simulation      | partial | `noise.js`: precomputed Perlin arrays → `weather.rain`, `weather.moisture`, `weather.temperature` (W toggles on/off). Rain drives the weather palette; no rain drops or puddle yet                                                                                                                                                                                       |
+| Puddle                  | planned |                                                                                                                                                                                                                                                                                                                                                                          |
+| Interaction / creatures | partial | `user-input.js`: leaf sway on hover (`LeafSway`, trees only) + click bursts/rings (`Burst`). No tree shake, reaction table or creatures yet                                                                                                                                                                                                                              |
+| Render layers / caching | partial | `sketch.js`: whole scene cached in offscreen buffers, repainted in the background when the palette drifts, cross-faded in; hover patch redrawn live. Runs at `FRAME_RATE` 24. No puddle/rain/atmosphere layers yet                                                                                                                                                       |
+| HUD                     | partial | `index.html` + `style.css` + `updateHud()` in `sketch.js`: time, temperature, humidity and moisture show text + a progress meter (`setMeter()`; time = midnight → midnight, temperature = `temperatureRange` 0–20 °C, humidity / moisture = 0–100 %), read from `weather` (`noise.js`). Conditions shows `getConditions()` (Clear / Cloudy / Light drizzle / Heavy rain) |
 
 ---
 
@@ -66,16 +66,23 @@ If a change needs to break one of these rules, raise it with the team first. Don
 
 ## 3. Layer reference
 
-### Weather (planned — `env.js`)
+### Weather (partial — `noise.js`)
 
-| Value         | Range | Drives                                                                       |
-| ------------- | ----- | ---------------------------------------------------------------------------- |
-| `rain`        | 0 → 1 | Raindrop count, puddle ripples, and the weather palette (dry → overcast → wet) |
-| `temperature` | 0–20 °C (`temperatureRange`) | HUD meter today; what else it drives is TBD — agree as a team                                       |
-| `moisture`    | 0 → 1 | Puddle size, darker wet ground. Builds while raining, drains when dry        |
+| Value         | Range                         | Drives                                                                         |
+| ------------- | ----------------------------- | ------------------------------------------------------------------------------ |
+| `rain`        | 0 → 1                         | Raindrop count, puddle ripples, and the weather palette (dry → overcast → wet) |
+| `temperature` | ~0–20 °C (`temperatureRange`) | HUD meter today; what else it drives is TBD — agree as a team                  |
+| `moisture`    | 0 → 1                         | Puddle size, darker wet ground. Builds while raining, drains when dry          |
 
 - `moisture` is the layer's memory: the puddle follows moisture, not rain, so it lingers after a shower.
-- **Today:** only `weatherStub = { rain }` exists in `sketch.js`, feeding `getWeatherOffset()`. Replace it with the real Weather layer; keep `rain = 0` meaning dry so the time cycle is unaffected when weather is off.
+- **How it works (`noise.js`):** `setupWeather()` (in `setup()`) builds two noise arrays, each with its own noise seed, read as timelines at one sample per virtual hour (`sampleNoise()` blends neighbours and loops). `updateWeather()` runs first in `draw()`:
+  - `humidity` array → `rain` = how far humidity is above `rainThreshold`, rescaled to 0–1, so there are dry spells between showers.
+  - `moisture` += rain × `moistureFill`, −= drain × (1 − rain), per virtual hour; drain is multiplied by up to `daylightDrain` in daylight (the one deliberate time → weather link).
+  - `temperature` = `meanTemperature` + daily cosine (coldest ~3am, warmest ~3pm) + noise drift (slower `temperatureStep`, warm/cold spells over days) − rain cooling.
+  - Weather time comes from the change in `getDayFraction()` between frames, so pause freezes it; jumps over 1 h (T key) are skipped.
+  - The arrays are built once because scene drawing relies on `noiseSeed(seed)`; never call `noiseSeed()` from per-frame weather code.
+  - `getConditions()` → HUD label from humidity + moisture: rain above `rainThreshold` is Heavy rain only once humidity > `heavyHumidity` **and** the ground is wet (`heavyMoisture`), otherwise Light drizzle; dry but humid (`cloudyHumidity`) or still damp after a shower (`cloudyMoisture`) is Cloudy; otherwise Clear.
+- Off (W key) → `rain = 0`, mean temperature, moisture drains, so the time cycle is unaffected. All settings are in `weatherSettings`.
 - **Removed:** clouds, mist (and wind, unless re-agreed). Don't reintroduce them without a team decision. Older docs that mention `cloud` or `wetness` are out of date — `wetness` was renamed to `moisture`. (`palette.cloud` still exists as a derived sky tint but nothing draws clouds.)
 
 ### Time of day (built — `time.js`)
@@ -142,12 +149,12 @@ Don't hard-code colours in scene code — always go through `palette`.
 - **Mark counts:** wrap counts in `marks(n)` so density holds at any canvas size.
 - **Mark kit (`utils.js`):** use the shared marks rather than ad-hoc `line()` / `ellipse()` calls.
 
-  | Mark     | Function  | Shape                          | For                     |
-  | -------- | --------- | ------------------------------ | ----------------------- |
-  | Dash     | `dash()`  | straight, round ends                   | road, bark, bush marks  |
-  | Blade    | `blade()` | tapered, slightly bent stroke          | grass clumps            |
+  | Mark     | Function  | Shape                                                                                                                                                                                                                                            | For                                        |
+  | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+  | Dash     | `dash()`  | straight, round ends                                                                                                                                                                                                                             | road, bark, bush marks                     |
+  | Blade    | `blade()` | tapered, slightly bent stroke                                                                                                                                                                                                                    | grass clumps                               |
   | Dab      | `dab()`   | organic blob: 4 Catmull-Rom control points in a loose diamond, no straight edges; outline nudges come from `hash01(shapeSeed, …)`, so a mark looks the same every redraw (pass the resting place's `shapeSeed` to keep the shape while it moves) | leaves, foliage accents, curved bush marks |
-  | Scribble | planned   | 3–5 noise-nudged points                | blossom, ragged edges   |
+  | Scribble | planned   | 3–5 noise-nudged points                                                                                                                                                                                                                          | blossom, ragged edges                      |
 
 - **Trees (`trees.js`):** recursive branches with bezier bends, generated in the `Tree` constructor and drawn from that data. Placement comes from the `leftTrees` / `rightTrees` `along` lists in `buildTrees()`; size from `treeSettings.sizeFactor`. Leaves are clumps of `dab()` marks around the outer branches, generated once by `buildFoliage()` (shadow → mid → light pass, settings in `treeSettings`) and stored in `tree.foliage`, like `Bush` marks. Drawing (`drawWood()` + `drawLeaves()`) uses no `random()`, so any part of the scene can be redrawn on its own. Every tree is built, then every tree's foliage, before any is drawn: that keeps the `random()` order (and the look) fixed. `tree.bounds` / `bush.bounds` are boxes used by partial redraws. **Target:** add sway/shake as a per-node angle accumulating down the tree, and give only the nearest 2–3 trees full branching (`drawFar()` exists but `this.far` is currently disabled).
 - **Bushes (`bushes.js`):** overlapping `Bush` clumps along each verge, placed through `lane()` by `drawBushes()` (settings in `bushSettings`) and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with optional crisp dashes on top. Don't build bushes from branch skeletons.
@@ -157,7 +164,7 @@ Don't hard-code colours in scene code — always go through `palette`.
 
 **Built (`sketch.js`):** drawing the whole scene takes ~250 ms (~90k marks), so it is never drawn straight to the canvas:
 
-- `sceneSteps()` is the whole scene as a generator (sky → ground → road → grass → *base snapshot* → bushes → trees → debug labels); each `yield` is a point where it can pause. `stepRebuild()` runs it into an offscreen `p5.Graphics` by temporarily pointing p5's renderer (and `drawingContext`) at it.
+- `sceneSteps()` is the whole scene as a generator (sky → ground → road → grass → _base snapshot_ → bushes → trees → debug labels); each `yield` is a point where it can pause. `stepRebuild()` runs it into an offscreen `p5.Graphics` by temporarily pointing p5's renderer (and `drawingContext`) at it.
 - Two buffer sets (`buffers.current` on screen, `buffers.pending` being painted), each with `scene` (everything) and `base` (under bushes/trees). Each frame `drawBuffer(current.scene)` copies the picture to the canvas pixel for pixel (no scaling: resampling at a fractional pixel density made redrawn patches show as a sharper square). Order per frame: picture → hover patch (`redrawArea`) → `drawFadingPicture()`, so a cross-fade covers the patch too.
 - When any palette colour drifts more than `cacheSettings.colourThreshold`, a background repaint starts and gets `frameBudgetMs` per frame; when done, `finishRebuild()` swaps the buffers and the old picture fades out over `fadeFrames`. `sceneDirty = true` (first frame, `r`, `d`, resize) repaints in one go instead.
 - Hover: `getSwayAreas()` returns 0–2 circles (tree sway, bush rustle), each sized to exactly where moving leaves can reach (`reachOfMovingLeaves()`, leaf shift capped at `swayDistance`) plus a `swayEdgeSoftness` fade ring. `redrawArea()` paints that circle on an offscreen `buffers.patch` (via `drawInto()` + `withClip()`): `current.base`, then only the bushes/trees whose `bounds` overlap, and only their marks inside. Then `fadeEdge()` fades its rim, and it's copied onto the canvas. Why: (a) the browser rasterises the visible canvas and offscreen canvases slightly differently, and never quite identically twice, so a hard-edged patch drawn on the canvas showed as an outline; (b) trees keep their build-time bark colour (`tree.woodColour`), since the live palette drifts away from the saved picture. `sceneSteps()` starts with an opaque `background()`: the sky's 1 px lines alone left pixels ~75% opaque.
@@ -179,47 +186,48 @@ Still planned:
 
 ## 6. File structure
 
-Scripts are plain (non-module) `<script>` tags sharing globals; load order in `index.html` matters: `colors.js` → `time.js` → `utils.js` → `trees.js` → `bushes.js` → `sketch.js` → `user-input.js`.
+Scripts are plain (non-module) `<script>` tags sharing globals; load order in `index.html` matters: `colors.js` → `time.js` → `noise.js` → `utils.js` → `trees.js` → `bushes.js` → `sketch.js` → `user-input.js`.
 
 **Existing**
 
-| File          | Owns                                                                                          |
-| ------------- | --------------------------------------------------------------------------------------------- |
-| `colors.js`   | Colour data as `[h, s, b]`: `WEATHER_SETS`, `TIME_KEYFRAMES`                                  |
-| `time.js`     | Clock + pause, OKLab blending, keyframe schedule, `getDaylight()`, `getWeatherOffset()`, `resolvePalette()` |
-| `utils.js`    | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`, `dab`), `jitter`, `mixRGB`, `colourToHsb`, number helpers (`hash01`, `randomBetween`, `easeInOutSine`, `smoothFalloff`, `approach`), shape tests (`pointInRect`, `rectsOverlap`, `pointInEllipse`, `pointInPolygon`), `windowToScene`, `laneScaleAt`, `sharpDensity` |
-| `trees.js`    | `Tree` (recursive bending branches, leaf clumps) + bezier helpers                                          |
-| `bushes.js`   | `Bush` (one blurred undergrowth clump)                                                        |
-| `user-input.js` | Leaf sway + bush rustle (`LeafSway` ×2, `swayLeaf()` hook used by `trees.js`, `rustleBushMark()` hook used by `bushes.js`, `getSwayAreas()` used by `sketch.js`, `leafCoverage` map), click bursts (`Burst`) + rings, region lookup (`getRegion`), tree/bush hit areas. Settings (`sway*`, `rustle*`) at the top |
-| `sketch.js`   | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `cacheSettings`, `clock`, `FRAME_RATE`), scene cache + background repaint (`sceneSteps`, `stepRebuild`, `redrawArea`, `isPaintedOverBase`), scene passes, `weatherStub` + `temperatureRange`, HUD (`updateHud`, `setMeter`), input |
-| `index.html`  | Script order + HUD markup (time / temperature / conditions; `.meter[data-meter=…]` bars) |
-| `style.css`   | Canvas scaling (cover the window) + HUD styling, incl. `.meter` (fill width from `--value`) |
-| `assets/`     | Reference image(s) from the series                                                            |
-| `scripts/`    | Old experiments (`set-up.js`, `user-input.js`), commented out in `index.html` — not used      |
-| `TODO.md`     | Per-layer task list                                                                           |
+| File            | Owns                                                                                                                                                                                                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `colors.js`     | Colour data as `[h, s, b]`: `WEATHER_SETS`, `TIME_KEYFRAMES`                                                                                                                                                                                                                        |
+| `time.js`       | Clock + pause, OKLab blending, keyframe schedule, `getDaylight()`, `getWeatherOffset()`, `resolvePalette()`                                                                                                                                                                         |
+| `noise.js`      | Weather layer: `weatherSettings`, live `weather` state (`rain`, `moisture`, `temperature`), `setupWeather()`, `updateWeather()`, `getConditions()`, `toggleWeather()`                                                                                                               |
+| `utils.js`      | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`, `dab`), `jitter`, `mixRGB`, `sharpDensity`                                                                                                                                                             |
+| `trees.js`      | `Tree` (recursive bending branches, leaf clumps) + bezier helpers                                                                                                                                                                                                                   |
+| `bushes.js`     | `Bush` (one blurred undergrowth clump)                                                                                                                                                                                                                                              |
+| `user-input.js` | Hover rustle (`ColourBlock` touch grid, `hoverTouch()` hook used by `trees.js` / `bushes.js`), click bursts (`Burst`) + rings, region lookup (`getRegion`), tree/bush hit areas, cursor → scene mapping. Settings (`hoverRadius`, `glintDuration`, `columns`, `rows`, …) at the top |
+| `sketch.js`     | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `cacheSettings`, `clock`, `FRAME_RATE`), scene cache + background repaint (`sceneSteps`, `stepRebuild`, `redrawArea`), scene passes, `temperatureRange`, HUD (`updateHud`, `setMeter`), input              |
+| `index.html`    | Script order + HUD markup (time / temperature / humidity / moisture / conditions; `.meter[data-meter=…]` bars)                                                                                                                                                                      |
+| `style.css`     | Canvas scaling (cover the window) + HUD styling, incl. `.meter` (fill width from `--value`)                                                                                                                                                                                         |
+| `assets/`       | Reference image(s) from the series                                                                                                                                                                                                                                                  |
+| `scripts/`      | Old experiments (`set-up.js`, `user-input.js`), commented out in `index.html` — not used                                                                                                                                                                                            |
+| `TODO.md`       | Per-layer task list                                                                                                                                                                                                                                                                 |
 
 **Planned**
 
-| File         | Will own                                                              |
-| ------------ | --------------------------------------------------------------------- |
-| `config.js`  | Tunable settings currently at the top of `sketch.js` + colour data    |
-| `env.js`     | `TimeOfDay`, `Weather`, `Environment` (resolves palette + light)      |
-| `actors.js`  | Birds, ducks, petals, rain, reaction table                            |
-| `scene.js`   | `Puddle`, static/live drawing passes                                  |
+| File        | Will own                                                                     |
+| ----------- | ---------------------------------------------------------------------------- |
+| `config.js` | Tunable settings currently at the top of `sketch.js` + colour data           |
+| `env.js`    | `TimeOfDay`, `Environment` (resolves palette + light); may absorb `noise.js` |
+| `actors.js` | Birds, ducks, petals, rain, reaction table                                   |
+| `scene.js`  | `Puddle`, static/live drawing passes                                         |
 
 Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings object (`config.js` once it exists), not inline. Annotate them with `[hard limits]` and a "try" range, like `perspective` in `sketch.js`.
 
 **Keys:**
 
-| Key | Action                                                                  |
-| --- | ----------------------------------------------------------------------- |
-| `t` | Toggle virtual ↔ real (wall) clock                                      |
-| `p` | Pause / resume the clock                                                |
-| `w` | Cycle `weatherStub.rain` 0 → 0.5 → 1 (temporary, until the Weather layer exists) |
-| `d` | Toggle debug tree labels (side + `along` value at each trunk)            |
-| `r` | Redraw                                                                  |
-| hover | Moving onto tree leaves makes the leaves near the cursor sway slightly; they calm to still about 1 s after the cursor stops or leaves. Moving over a bush makes its marks rustle (quicker, smaller flicker) |
-| click | Blossom/leaf burst + ring when a tree leaf or a bush is clicked; nothing elsewhere |
+| Key   | Action                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `t`   | Toggle virtual ↔ real (wall) clock                                                                                                    |
+| `p`   | Pause / resume the clock                                                                                                              |
+| `w`   | Toggle the noise weather on / off (off = dry, mean temperature)                                                                       |
+| `d`   | Toggle debug tree labels (side + `along` value at each trunk)                                                                         |
+| `r`   | Redraw                                                                                                                                |
+| hover | Moving onto tree leaves makes the leaves near the cursor sway slightly; they calm to still about 1 s after the cursor stops or leaves |
+| click | Blossom/leaf burst on a tree or bush; ring (ripple on the ruts) anywhere                                                              |
 
 ---
 
@@ -249,8 +257,9 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 - [x] Sample daytime palettes for dry / overcast / wet from the series
 - [ ] Tune the invented GoldenHour / Dusk / Night keyframes (no night references exist)
 - [ ] Give `leaf` its own non-Day keyframes (currently copies grass)
-- [ ] Build the Weather layer: noise-driven `rain`, `moisture`, rain drops; replace `weatherStub`
-- [ ] Decide what `temperature` drives; drive HUD temperature from the Weather layer; wire the Conditions label
+- [x] Weather layer: noise-driven `rain`, `moisture`, `temperature` (`noise.js`)
+- [ ] Rain drops (count follows `weather.rain`)
+- [ ] Decide what `temperature` drives
 - [ ] Set the composition: vanishing point, road width, tree placement
 - [x] Store tree leaf marks once (`buildFoliage()`)
 - [ ] Redraw trees per frame for sway and shake (only the swaying ones, like `redrawArea()`); re-enable far trees
