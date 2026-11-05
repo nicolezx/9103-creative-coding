@@ -117,7 +117,8 @@ class Tree {
   draw(area) {
     if (this.far) return this.drawFar();
     this.drawWood();
-    this.drawLeaves(area);
+    const leafCount = floor(this.foliage.length * seasonProgress);
+    this.drawLeaves(area, 0, leafCount);
   }
   // trunk + branches
   drawWood() {
@@ -245,53 +246,57 @@ class Tree {
         : [palette.bush, palette.leaf, palette.leafLight];
     // far trees get fewer marks; detail is lost at that size anyway
     const sizeScale = min(1, this.height / 500);
-    const marksPerClump = round(
-      lerp(settings.leafMarksPerClump * 0.4, settings.leafMarksPerClump, sizeScale),
-    );
-    const passShare = [0.3, 0.45, 0.25]; // shadow / mid / light share of each clump's marks
-    const passLift = [0.35, 0, -0.35]; // vertical drift per pass, in clump radii (− = up)
-
-    const clumps = [];
-    for (const anchor of anchors) {
-      const count = round(random(...settings.clumpsPerBranch));
-      for (let i = 0; i < count; i++) {
-        // clumps sit along the outer part of the branch and spill past the tip
-        const t = random(0.45, 1.05);
-        clumps.push({
-          x: bezierPoint(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t),
-          y: bezierPoint(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t),
-          radius: anchor.length * random(...settings.clumpSize),
-        });
-      }
-    }
+    const passShare = [0.3, 0.45, 0.25]; // shadow / mid / light share of each branch's marks
+    const passLift = [0.35, 0, -0.35];   // vertical drift per pass, in spread units (− = up)
 
     this.foliage = [];
-    for (let pass = 0; pass < 3; pass++) {
-      for (const clump of clumps) {
-        const markLength = max(1.5, clump.radius * settings.leafMarkLength);
-        for (let i = 0; i < marksPerClump * passShare[pass]; i++) {
-          // sqrt spreads marks evenly over the disc; squash it a little so
-          // clumps are wider than tall, like foliage masses.
-          // Keep the random() calls in this order: angle, r, mark angle,
-          // length, colour (jitter), bend.
-          const angle = random(TWO_PI);
-          const r = sqrt(random()) * clump.radius;
+    for (const anchor of anchors) {
+      const totalCount = round(random(...settings.leavesPerBranch) * sizeScale);
+      const spread = anchor.length * settings.leafDistance;
+      const markLength = max(1.5, anchor.length * settings.leafMarkLength);
+      for (let pass = 0; pass < 3; pass++) {
+        const count = max(1, round(totalCount * passShare[pass]));
+        for (let i = 0; i < count; i++) {
+          // sample a point along the branch, biased toward the outer half
+          const t = constrain(random(0.1, 1.1), 0, 1);
+          const bx = bezierPoint(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t);
+          const by = bezierPoint(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t);
+          // perpendicular to the branch direction at this point, so leaves
+          // fan out sideways from the wood rather than piling on top of it
+          const dtx = bezierTangent(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t);
+          const dty = bezierTangent(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t);
+          const tLen = Math.hypot(dtx, dty) || 1;
+          const perpX = -dty / tLen;
+          const perpY = dtx / tLen;
+          const offset = (random() * 2 - 1) * spread;
           const leaf = {
-            x: clump.x + cos(angle) * r,
-            y: clump.y + sin(angle) * r * 0.8 + passLift[pass] * clump.radius,
+            x: bx + perpX * offset,
+            y: by + perpY * offset + passLift[pass] * spread * 0.5,
             angle: random(TWO_PI),
             length: markLength * random(0.7, 1.3),
             weight: max(1.2, markLength * 0.6),
             colour: jitter(colours[pass], 8, 10, 10),
-            bend: random(-0.2, 0.2), // each diamond leans a different direction
+            bend: random(-0.2, 0.2),
           };
-          // fixed outline from the resting place (a hash, not random(), so
-          // the layout's random() order is unchanged)
           leaf.shapeSeed = hash01(leaf.x, leaf.y, leaf.angle);
           this.foliage.push(leaf);
         }
       }
     }
+
+    // Sort by distance to branch tip: seasonal growth fans outward from the ends.
+    // No random() calls — only uses already-computed positions — so the layout is unchanged.
+    for (const leaf of this.foliage) {
+      let minD = Infinity;
+      for (const anchor of anchors) {
+        const dx = leaf.x - anchor.endX, dy = leaf.y - anchor.endY;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < minD) minD = d2;
+      }
+      leaf._sortKey = minD;
+    }
+    this.foliage.sort((a, b) => a._sortKey - b._sortKey);
+    for (const leaf of this.foliage) delete leaf._sortKey;
 
     // bounds: trunk, branches and leaves, padded by mark size so a pushed or
     // thick mark still falls inside

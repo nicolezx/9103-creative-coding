@@ -416,23 +416,26 @@ function isOverBush(x, y) {
   return hitAreas.bush.some((area) => pointInPolygon(x, y, area.outline));
 }
 
-// Fill the leaf coverage grid: mark every cell a leaf (incl. its size) touches
+// Fill the leaf coverage grid: mark every cell a leaf (incl. its size) touches.
+// Only includes leaves that have actually been drawn (capped by seasonProgress).
 function buildLeafCoverage(trees) {
   const columnCount = ceil(width / leafCoverageCellSize);
   const rowCount = ceil(height / leafCoverageCellSize);
   const cells = new Uint8Array(columnCount * rowCount);
-  leafSway.setBiggestMark(trees.flatMap((tree) => tree.foliage || []));
-  for (const tree of trees) {
-    for (const leaf of tree.foliage || []) {
-      const reach = leaf.length / 2; // leaves are centred on (x, y)
-      const firstColumn = max(0, floor((leaf.x - reach) / leafCoverageCellSize));
-      const lastColumn = min(columnCount - 1, floor((leaf.x + reach) / leafCoverageCellSize));
-      const firstRow = max(0, floor((leaf.y - reach) / leafCoverageCellSize));
-      const lastRow = min(rowCount - 1, floor((leaf.y + reach) / leafCoverageCellSize));
-      for (let row = firstRow; row <= lastRow; row++) {
-        for (let column = firstColumn; column <= lastColumn; column++) {
-          cells[row * columnCount + column] = 1;
-        }
+  const drawnLeaves = trees.flatMap((tree) => {
+    const count = floor((tree.foliage || []).length * seasonProgress);
+    return (tree.foliage || []).slice(0, count);
+  });
+  leafSway.setBiggestMark(drawnLeaves);
+  for (const leaf of drawnLeaves) {
+    const reach = leaf.length / 2; // leaves are centred on (x, y)
+    const firstColumn = max(0, floor((leaf.x - reach) / leafCoverageCellSize));
+    const lastColumn = min(columnCount - 1, floor((leaf.x + reach) / leafCoverageCellSize));
+    const firstRow = max(0, floor((leaf.y - reach) / leafCoverageCellSize));
+    const lastRow = min(rowCount - 1, floor((leaf.y + reach) / leafCoverageCellSize));
+    for (let row = firstRow; row <= lastRow; row++) {
+      for (let column = firstColumn; column <= lastColumn; column++) {
+        cells[row * columnCount + column] = 1;
       }
     }
   }
@@ -554,8 +557,9 @@ function registerHitAreas(kind, objects) {
 // the trunk top
 // Written by the Claude AI plugin for VS Code
 function treeHitArea(tree) {
+  const leafCount = floor((tree.foliage || []).length * seasonProgress);
   return {
-    leaves: tree.foliage || [],
+    leaves: (tree.foliage || []).slice(0, leafCount),
     bounds: tree.bounds,
     trunk: {
       x: min(tree.x, tree.trunkTop.x) - tree.baseWidth,

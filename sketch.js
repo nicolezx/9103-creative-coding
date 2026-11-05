@@ -38,10 +38,9 @@ const perspective = {
 // Undergrowth clumps (bushes.js)
 const treeSettings = {
   sizeFactor: [1.45, 2], // [min, max] tree height as a fraction of canvas height at lane scale 1 [> 0, min ≤ max]; try 0.8–2.5
-  clumpsPerBranch: [2, 4], // [min, max] leaf clumps on each outer branch [≥ 0, min ≤ max]; try 0–5
-  clumpSize: [0.3, 0.4], // [min, max] clump radius as a fraction of its branch's length [> 0]; try 0.15–0.7
-  leafMarksPerClump: 90, // dabs per clump on the nearest trees (far trees get fewer) [whole number ≥ 0, higher = denser but slower]; try 30–150
-  leafMarkLength: 0.4, // dab length as a fraction of clump radius [> 0]; try 0.15–0.5
+  leavesPerBranch: [20, 30], // leaves scattered along each outer branch (all three passes combined) [whole number ≥ 0]; try 6–30
+  leafDistance: 0.30, // LEAF DISTANCE/SPREAD how far leaves stray perpendicular to the branch, as a fraction of branch length [> 0]; try 0.05–0.4
+  leafMarkLength: 0.1, // LEAF SIZE leaf dab length as a fraction of branch length [> 0]; try 0.05–0.25
 };
 
 const bushSettings = {
@@ -112,6 +111,15 @@ const cacheSettings = {
   paintedOverThreshold: 4, // summed RGB difference (0–765) above which a pixel counts as covered by a bush/tree,
   //                          for clicks (isPaintedOverBase) [≥ 0]; try 2–10 (just above anti-aliasing noise)
 };
+
+// Total virtual days from bare winter trees to full spring density.
+const seasonDays = 0.2; // [> 0]; try 10–40
+
+// Leaf growth over the season: trees start bare (day 0) and reach full density at seasonDays.
+const leafGrowthSettings = {
+  growthDays: seasonDays,
+  batchFraction: 0.02, // trigger a repaint when this fraction of total leaves would newly appear [0–1]; try 0.01–0.05
+};
 // Two sets of buffers: `current` is on screen, `pending` is being repainted
 let buffers = null; // { current: { scene, base }, pending: { scene, base } } (p5.Graphics; base = under bushes/trees)
 let rebuild = null; // background repaint in progress (sceneSteps generator)
@@ -122,6 +130,13 @@ let fadeStart = 0; // frameCount when the fade began
 let sceneDirty = true; // repaint immediately, in one go (first frame, seed / debug / resize changes)
 let sceneBushes = []; // Bush objects in draw order, kept for partial redraws
 let sceneTrees = []; // Tree objects in draw order
+
+// Season: how far through spring leaf growth we are (0 = bare, 1 = full density).
+// Advances with virtual time; never resets (the season moves forward only).
+let seasonProgress = 0;
+let cachedSeasonProgress = null; // seasonProgress when the current cached picture was painted
+let totalVirtualDays = 0;        // accumulated virtual days elapsed (paused time excluded)
+let _lastSeasonFraction = -1;    // getDayFraction() last frame, for the day-delta accumulator
 let sceneStars = []; // star marks (buildStars), kept for twinkling and partial redraws
 let treePlacements = []; // for the debug labels
 
@@ -208,6 +223,20 @@ function setup() {
 function draw() {
   updateWeather(); // rain, moisture, temperature for this frame (noise.js)
 
+  // Advance seasonal leaf growth. getDayFraction() is frozen while paused, so
+  // this only accumulates real (un-paused) virtual time. Jumps larger than half
+  // a day (e.g. backward arrow steps) are ignored, consistent with noise.js.
+  {
+    const f = getDayFraction();
+    if (_lastSeasonFraction >= 0) {
+      let delta = f - _lastSeasonFraction;
+      if (delta < 0) delta += 1; // wrapped past midnight
+      if (delta <= 0.5) totalVirtualDays += delta;
+    }
+    _lastSeasonFraction = f;
+    seasonProgress = min(1, totalVirtualDays / leafGrowthSettings.growthDays);
+  }
+
   // Update every palette entry for the current time of day and weather.
   // Time and weather only meet here (AGENTS.md §2): either works with the
   // other switched off (rain = 0 → no weather offset).
@@ -293,8 +322,10 @@ function* sceneSteps() {
   const leavesPerStep = 1500; // big near trees have ~10k leaf marks: split them up
   for (const tree of trees) {
     tree.drawWood();
-    for (let i = 0; i < tree.foliage.length; i += leavesPerStep) {
-      tree.drawLeaves(null, i, i + leavesPerStep);
+    yield; // pause after wood so the budgeter can break before the leaf passes
+    const leafCount = floor(tree.foliage.length * seasonProgress);
+    for (let i = 0; i < leafCount; i += leavesPerStep) {
+      tree.drawLeaves(null, i, min(i + leavesPerStep, leafCount));
       yield;
     }
   }
@@ -359,6 +390,7 @@ function finishRebuild({ stars, bushes, trees, placements }) {
   registerHitAreas("bush", bushes); // so hover/click know where things are (user-input.js)
   registerHitAreas("tree", trees);
   cachedPaletteLevels = rebuildPalette;
+  cachedSeasonProgress = seasonProgress;
   rebuild = null;
 }
 
@@ -456,6 +488,10 @@ function paletteDrifted() {
       if (abs(now[i] - then[i]) > cacheSettings.colourThreshold) return true;
     }
   }
+  // repaint when enough new leaves would appear, or the final leaf has just unlocked
+  if (cachedSeasonProgress !== null && seasonProgress < 1 &&
+      seasonProgress - cachedSeasonProgress >= leafGrowthSettings.batchFraction) return true;
+  if (cachedSeasonProgress !== null && cachedSeasonProgress < 1 && seasonProgress >= 1) return true;
   return false;
 }
 
