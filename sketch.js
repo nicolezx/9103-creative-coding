@@ -17,7 +17,7 @@ let seed = 11;
 
 // Debug overlays (D toggles)
 const debug = {
-  treeLabels: true, // label each tree's trunk base with its side + `along` value
+  treeLabels: false, // label each tree's trunk base with its side + `along` value
 };
 
 // Perspective
