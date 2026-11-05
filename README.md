@@ -16,7 +16,18 @@ Nicole Ho 560417630, Kritika Kanoi 560774382, Kasia Pownall 520473568
 
 // What p5.js techniques were implemented in the project and why? Give a short overview of how your code works and the key decisions your team made.
 
-- base drawing used fractcals for the trees
+- base drawing used fractals for the trees: each `Tree` grows recursive branches, bent with `bezierVertex()` curves, with clumps of leaf and blossom marks built around the outer branches
+- everything is drawn as Hockney-style **marks** over flat colour, using a shared mark kit in `utils.js`: `dash()` (road, bark, bush strokes), `blade()` (tapered grass strokes) and `dab()` (organic blobs drawn with `curveVertex()` Catmull-Rom splines, so leaves have no straight edges)
+- a single `lane(along, across)` perspective function places everything on the ground relative to a vanishing point and returns a `scale` for sizing marks, so the composition can be retuned from one `perspective` settings object
+- bushes are noise-wobbled blobs softened with a canvas blur (`drawingContext.filter`), with crisp dashes on top
+- `randomSeed()` / `noiseSeed()` keep the layout identical on every redraw, so the scene can be repainted as colours change without trees and bushes jumping around
+- **time of day:** a 24-hour cycle compressed into 60 seconds (or the real clock) blends between Night, Dusk, Golden Hour and Day colour keyframes; stars fade in at night and twinkle using `noise()` over time
+- **colour:** all colours are stored as HSB and blended in OKLab, so transitions between times of day and weather don't pass through muddy greys; weather is layered on top of the time-of-day palette as an offset, sampled from three paintings in the series (dry, overcast, wet)
+- **weather:** precomputed Perlin `noise()` arrays act as a timeline for humidity and temperature; rain builds up `moisture`, which dries out faster in daylight, so puddles linger after a shower
+- **rain:** wavering bezier raindrops splash on the road and leave wet patches, drawn onto a separate `createGraphics()` layer and multiplied over the road (`blendMode(MULTIPLY)`) so the road texture shows through; one deeper puddle grows and dries with `moisture`
+- **performance:** drawing the full scene takes ~250 ms (~90k marks), so it's cached in offscreen `createGraphics()` buffers and repainted in the background using a generator function (`function*` / `yield`) that spreads the work over several frames, then cross-fades in
+- **interaction:** hovering over tree leaves or bushes makes nearby marks sway, driven by `noise()` so neighbouring leaves move together, and only that small patch of the canvas is redrawn; clicking a tree or bush sends out a burst of leaf pieces with drag and gravity
+- a HUD built in HTML/CSS shows the time, temperature, humidity, moisture and current conditions, updated from the sketch each frame
 
 ## Mechanic ownership
 
