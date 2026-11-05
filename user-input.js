@@ -372,7 +372,7 @@ function getSwayAreas() {
 }
 
 // What's under scene point (x, y): "tree" (a leaf mark), "trunk", "bush"
-// (inside a clump's outline), "verge", "water", "track" or "sky".
+// (inside a clump's outline) or "ground" (anything else).
 function getRegion(x, y) {
   return getHit(x, y).region;
 }
@@ -397,7 +397,7 @@ function getHit(x, y) {
       return { region: "bush", mark: nearestMark(x, y, bushes[index].marks) };
     }
   }
-  return { region: groundRegion(x, y), mark: null };
+  return { region: "ground", mark: null }; // sky, road or open grass: nothing reacts there
 }
 
 
