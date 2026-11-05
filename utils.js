@@ -236,6 +236,18 @@ function pointInEllipse(x, y, ellipseArea) {
   return offsetX * offsetX + offsetY * offsetY <= 1;
 }
 
+// Is (x, y) inside the closed outline `points` ([{ x, y }, …])? Counts how
+// many outline edges a ray going right from the point crosses: odd = inside.
+function pointInPolygon(x, y, points) {
+  let inside = false;
+  for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
+    const a = points[index];
+    const b = points[previous];
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
 // ---------------------------------------------------------------------------
 // Screen ↔ scene helpers
 // ---------------------------------------------------------------------------

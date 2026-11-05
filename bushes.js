@@ -97,14 +97,19 @@ class Bush {
     drawingContext.filter = "none";
   }
 
+  // rustleBushMark (user-input.js) moves the marks near the cursor; curved
+  // marks keep their resting outline (shapeSeed) while they move
   drawMarks(area) {
-    for (const mark of this.marks) {
-      // partial redraw: skip marks outside the area (padded by the mark's size)
-      if (area && !pointInRect(mark.x, mark.y, area, mark.length * 2)) continue;
+    for (const restingMark of this.marks) {
+      // partial redraw: skip marks outside the area (padded by the mark's size
+      // plus room for the rustle)
+      if (area && !pointInRect(restingMark.x, restingMark.y, area, restingMark.length * 2)) continue;
+      const mark = rustleBushMark(restingMark);
       if (mark.bend === 0) {
         dash(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour);
       } else {
-        dab(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour, mark.bend);
+        const shapeSeed = hash01(restingMark.x, restingMark.y, restingMark.angle); // = dab()'s default at rest
+        dab(mark.x, mark.y, mark.angle, mark.length, mark.weight, mark.colour, mark.bend, shapeSeed);
       }
     }
   }
