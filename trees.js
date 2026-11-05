@@ -6,6 +6,10 @@ class Tree {
     this.height = height;
     this.kind = kind;
     // this.side = side;
+    // Bark colour as it was when this tree was painted. Partial redraws (hover
+    // patch) must use the same colour as the saved picture, not the live
+    // palette, which keeps drifting with the time of day
+    this.woodColour = palette.trunk;
 
     if (this.far) return;
 
@@ -124,8 +128,7 @@ class Tree {
     // half-width at the control points (1/3 and 2/3 up) keeps the taper even
     const halfWidthAt = (t) => lerp(this.baseWidth, topWidth, t) / 2;
     noStroke();
-    fill(palette.trunk);
-    // fill(jitter(palette.trunk, 4, 6, 4));
+    fill(this.woodColour);
     beginShape();
     vertex(this.x - this.baseWidth / 2, this.y);
     bezierVertex(
@@ -178,7 +181,7 @@ class Tree {
 
     // branches
     const drawBranch = (node) => {
-      stroke(palette.trunk);
+      stroke(this.woodColour);
       noFill();
       // taper: draw the curve in pieces, thinning down to the children's
       // starting weight (× 0.62, see makeBranch) so joints meet without a step

@@ -163,10 +163,13 @@ function draw() {
     startRebuild();
   }
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
-  drawPicture();
+  drawBuffer(buffers.current.scene); // the saved picture
 
   const swayArea = getSwayArea(); // patch of swaying leaves, if any (user-input.js)
   if (swayArea) redrawArea(swayArea);
+  // after the patch, so a cross-fade covers the patch too (otherwise the patch
+  // shows the new colours while the rest is mid-fade: a visible square)
+  drawFadingPicture();
   updateInputElements(); // fades the hover, draws rings and bursts on top (user-input.js)
 }
 
@@ -228,32 +231,43 @@ function startRebuild() {
 // buffer: p5's drawing functions are pointed at it for the duration
 function stepRebuild(budgetMs) {
   const start = performance.now();
+  swayPaused = true; // keep the picture clean: swaying leaves are drawn on top by redrawArea()
+  try {
+    drawInto(buffers.pending.scene, () => {
+      while (true) {
+        const step = rebuild.next();
+        if (step.done) {
+          finishRebuild(step.value);
+          break;
+        }
+        if (performance.now() - start > budgetMs) break;
+      }
+    });
+  } finally {
+    swayPaused = false;
+  }
+}
+
+// Run `drawing` with all of p5's drawing functions pointed at an offscreen
+// buffer instead of the canvas, then point them back
+function drawInto(buffer, drawing) {
   const instance = p5.instance;
   const mainRenderer = instance._renderer;
   const mainContext = drawingContext;
-  instance._renderer = buffers.pending.scene._renderer;
-  drawingContext = buffers.pending.scene.drawingContext; // bushes.js uses it for the blur
-  swayPaused = true; // keep the picture clean: swaying leaves are drawn on top by redrawArea()
+  instance._renderer = buffer._renderer;
+  drawingContext = buffer.drawingContext; // bushes.js uses it for the blur
   try {
-    while (true) {
-      const step = rebuild.next();
-      if (step.done) {
-        finishRebuild(step.value);
-        break;
-      }
-      if (performance.now() - start > budgetMs) break;
-    }
+    drawing();
   } finally {
     instance._renderer = mainRenderer;
     drawingContext = mainContext;
-    swayPaused = false;
   }
 }
 
 // Swap the finished picture on screen and start fading the old one out
 function finishRebuild({ bushes, trees, placements }) {
   const { current, pending } = buffers;
-  buffers = { current: pending, pending: current };
+  buffers = { ...buffers, current: pending, pending: current }; // swap; keep the patch buffer
   fadeFrom = current.scene;
   fadeStart = frameCount;
   sceneBushes = bushes;
@@ -265,9 +279,8 @@ function finishRebuild({ bushes, trees, placements }) {
   rebuild = null;
 }
 
-// Copy the current picture to the canvas, with the previous one fading out on top
-function drawPicture() {
-  drawBuffer(buffers.current.scene);
+// The previous picture, fading out over everything drawn so far this frame
+function drawFadingPicture() {
   if (!fadeFrom) return;
   const t = (frameCount - fadeStart) / cacheSettings.fadeFrames;
   if (t >= 1) {
@@ -279,19 +292,61 @@ function drawPicture() {
   drawingContext.globalAlpha = 1;
 }
 
-// Redraw just `area` ({ x, y, w, h }): the static layer, then only the bushes
+// Redraw just `area`: a circle ({ centreX, centreY, radius } + its bounding
+// box { x, y, w, h }) or a box. Paints the static layer, then only the bushes
 // and trees that overlap it, so hovered marks move without a full repaint
+//
+// The patch is painted on an offscreen buffer (like the saved picture), then
+// its shape is copied to the canvas. Painting straight onto the visible canvas
+// gave slightly different anti-aliasing on every leaf edge (the browser
+// draws visible and offscreen canvases differently), which showed as a faint
+// outline around the patch.
 function redrawArea(area) {
-  const ctx = drawingContext;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(area.x, area.y, area.w, area.h);
-  ctx.clip();
-  drawBuffer(buffers.current.base);
-  for (const bush of sceneBushes) if (rectsOverlap(bush.bounds, area)) bush.draw(area);
-  for (const tree of sceneTrees) if (rectsOverlap(tree.bounds, area)) tree.draw(area);
-  if (debug.treeLabels) drawTreeLabels(treePlacements);
-  ctx.restore();
+  // 1. paint the patch on the offscreen patch buffer
+  drawInto(buffers.patch, () => {
+    withClip(area, () => {
+      drawBuffer(buffers.current.base);
+      for (const bush of sceneBushes) if (rectsOverlap(bush.bounds, area)) bush.draw(area);
+      for (const tree of sceneTrees) if (rectsOverlap(tree.bounds, area)) tree.draw(area);
+      if (debug.treeLabels) drawTreeLabels(treePlacements);
+    });
+  });
+  // 2. fade its rim out, so it blends into the picture with no visible edge
+  if (area.softEdge) fadeEdge(buffers.patch, area);
+  // 3. copy just that shape onto the canvas
+  withClip(area, () => drawBuffer(buffers.patch));
+}
+
+// Make the outer `area.softEdge` px of a round patch fade from solid to
+// see-through ("destination-in" keeps the buffer only as much as the
+// gradient is opaque)
+function fadeEdge(buffer, area) {
+  const context = buffer.drawingContext;
+  const { centreX, centreY, radius, softEdge } = area;
+  const gradient = context.createRadialGradient(centreX, centreY, radius - softEdge, centreX, centreY, radius);
+  gradient.addColorStop(0, "rgba(0, 0, 0, 1)"); // fully kept inside
+  gradient.addColorStop(1, "rgba(0, 0, 0, 0)"); // gone at the edge
+  context.save();
+  context.globalCompositeOperation = "destination-in";
+  context.fillStyle = gradient;
+  context.fillRect(area.x, area.y, area.w, area.h);
+  context.restore();
+}
+
+// Run `drawing` with everything outside `area` masked off: a circle when
+// it has a radius, otherwise its box
+function withClip(area, drawing) {
+  const context = drawingContext;
+  context.save();
+  context.beginPath();
+  if (area.radius) context.arc(area.centreX, area.centreY, area.radius, 0, TWO_PI);
+  else context.rect(area.x, area.y, area.w, area.h);
+  context.clip();
+  try {
+    drawing();
+  } finally {
+    context.restore();
+  }
 }
 
 // True once any palette colour has moved more than colourThreshold since the
@@ -315,7 +370,7 @@ function paletteSnapshot() {
   );
 }
 
-// (Re)make the four offscreen buffers when missing or the pixel density changed
+// (Re)make the five offscreen buffers (2 × scene + base, 1 patch) when missing or the pixel density changed
 function ensureBuffers() {
   if (buffers && buffers.current.scene.pixelDensity() === pixelDensity()) return;
   if (buffers) {
@@ -323,6 +378,7 @@ function ensureBuffers() {
       set.scene.remove();
       set.base.remove();
     }
+    buffers.patch.remove();
   }
   const make = () => {
     const g = createGraphics(width, height);
@@ -334,6 +390,7 @@ function ensureBuffers() {
   buffers = {
     current: { scene: make(), base: make() },
     pending: { scene: make(), base: make() },
+    patch: make(), // where the hover patch is painted before it's copied to the canvas
   };
   fadeFrom = null;
 }
@@ -348,10 +405,17 @@ function copyBuffer(from, to) {
   ctx.restore();
 }
 
-// Paint a buffer over the whole canvas (it's at pixel density, so scale it
-// down into scene units)
+// Paint a buffer over the whole canvas, pixel for pixel. The buffer has the
+// canvas's exact pixel size, so it's copied with no scaling: scaling by a
+// fractional pixel density would resample (soften) it slightly, and leaves
+// redrawn crisply in a hover patch would then show as a sharper square.
+// (save/restore keeps any clip and globalAlpha the caller has set.)
 function drawBuffer(buffer) {
-  drawingContext.drawImage(buffer.elt, 0, 0, width, height);
+  const context = drawingContext;
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0); // raw pixels, no pixel-density scale
+  context.drawImage(buffer.elt, 0, 0);
+  context.restore();
 }
 
 

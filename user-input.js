@@ -27,8 +27,8 @@
 // Settings
 // ---------------------------------------------------------------------------
 // Ranges: [hard limits] are what the code can handle; "try" is what looks good.
-const swayRadius = 80; // px around the cursor in which leaves sway (soft edge) [> 0]; try 50–120
-const swayDistance = 2.5; // furthest a leaf shifts, in leaf widths [0–3, more can get clipped at the redraw edge]; try 1.5–3
+const swayRadius = 50; // px around the cursor in which leaves sway (soft edge) [> 0]; try 50–120
+const swayDistance = 4; // furthest a leaf shifts, in leaf widths [≥ 0; the redraw patch grows to fit]; try 1.5–4
 //                           (width is shared by every leaf in a clump, so neighbours move together;
 //                           noise() rarely reaches its extremes, so leaves typically move ~40% of this)
 const swayAngle = 0.3; // furthest a leaf turns, radians [≥ 0]; try 0.15–0.5
@@ -39,6 +39,8 @@ const swayCalmDelay = 0.3; // seconds the cursor must rest before the leaves sta
 const swayFadeOutTime = 0.18; // seconds to ease back to still (≈ 3.5× this to settle) [≥ 0]; try 0.15–0.4
 //                               (calm delay + settling ≈ 0.3 + 0.6 ≈ 1 s from the cursor stopping)
 const swayFollowTime = 0.15; // seconds the swaying patch takes to catch up with the cursor [≥ 0]; try 0.05–0.3
+const swayEdgeSoftness = 10; // px over which the redrawn circle fades into the picture, outside any moving leaf [≥ 0]; try 6–16
+//                              (hides the faint edge left by the browser drawing leaves very slightly differently each time)
 const leafCoverageCellSize = 8; // px per cell of the "where are leaves?" map [> 0, smaller = more exact]; try 4–12
 const burstCount = [10, 18]; // [min, max] pieces per click on a tree/bush [whole numbers ≥ 0]
 const burstLife = 1400; // ms a burst piece lives [> 0]; try 800–2500
@@ -70,6 +72,10 @@ const hitAreas = { tree: [], bush: [] };
 // leaf covers that cell. Rebuilt with the hit areas (buildLeafCoverage), so the
 // sway only starts when the cursor is really on leaves, not on sky between them.
 let leafCoverage = null; // { columnCount, rowCount, cells: Uint8Array }
+
+// Size of the biggest tree leaf, found in buildLeafCoverage. Sets how far past
+// swayRadius the redraw patch must reach so no moving leaf gets cut off.
+let biggestLeaf = { weight: 0, length: 0 };
 
 // ---------------------------------------------------------------------------
 // LeafSway: how much the leaves near the cursor are swaying right now.
@@ -115,13 +121,39 @@ class LeafSway {
     this.swayTime += swaySpeed * deltaSeconds;
   }
 
-  // The box sketch.js must redraw ({ x, y, w, h }), or null when still
+  // The circle sketch.js must redraw, or null when still:
+  // { centreX, centreY, radius, softEdge } plus its bounding box { x, y, w, h }.
+  // It's as small as possible while still holding every moving leaf; the soft
+  // edge fades out *beyond* the moving leaves, so none is ever cut or faded.
   getArea() {
     if (this.strength === 0) return null;
-    // leaves within swayRadius move, by up to swayDistance leaf widths (~25 px
-    // for the biggest leaves); the extra 60 px covers that plus the leaf's own size
-    const reach = swayRadius + 60;
-    return { x: this.centreX - reach, y: this.centreY - reach, w: reach * 2, h: reach * 2 };
+    const radius = this.reachOfMovingLeaves() + swayEdgeSoftness;
+    return {
+      centreX: this.centreX,
+      centreY: this.centreY,
+      radius,
+      softEdge: swayEdgeSoftness,
+      x: this.centreX - radius,
+      y: this.centreY - radius,
+      w: radius * 2,
+      h: radius * 2,
+    };
+  }
+
+  // Furthest from the centre any part of a moving leaf can get. A leaf at
+  // `distance` moves by up to smoothFalloff(distance) × the biggest shift, so
+  // check each distance out to swayRadius (leaves beyond it don't move). Then
+  // add how far a leaf's blob can reach past its centre (up to about its
+  // length: half its length plus outline nudges, curve overshoot and stroke,
+  // see dab() in utils.js) and 2 px for anti-aliasing.
+  reachOfMovingLeaves() {
+    const biggestShift = swayDistance * biggestLeaf.weight;
+    let furthestLeafCentre = 0;
+    for (let distance = 0; distance <= swayRadius; distance++) {
+      const shift = smoothFalloff(distance, swayRadius) * biggestShift;
+      furthestLeafCentre = max(furthestLeafCentre, distance + shift);
+    }
+    return furthestLeafCentre + biggestLeaf.length + 2;
   }
 
   // Step 3 — one leaf: return it unchanged, or a slightly moved copy
@@ -141,7 +173,13 @@ class LeafSway {
     const shiftY = (noise(noiseX + 100, noiseY, this.swayTime) - 0.5) * 2;
     const turn = (noise(noiseX + 200, noiseY, this.swayTime) - 0.5) * 2;
 
-    const shiftSize = amount * swayDistance * leaf.weight;
+    // x and y can both peak at once, which would carry a leaf ~1.4× further
+    // diagonally than swayDistance; scale the pair back so the total stays
+    // within swayDistance (keeps the redraw circle tight, see getArea)
+    const shiftLength = Math.hypot(shiftX, shiftY);
+    const shiftLimit = shiftLength > 1 ? 1 / shiftLength : 1;
+
+    const shiftSize = amount * swayDistance * leaf.weight * shiftLimit;
     return {
       ...leaf,
       x: leaf.x + shiftX * shiftSize,
@@ -269,8 +307,11 @@ function buildLeafCoverage(trees) {
   const columnCount = ceil(width / leafCoverageCellSize);
   const rowCount = ceil(height / leafCoverageCellSize);
   const cells = new Uint8Array(columnCount * rowCount);
+  biggestLeaf = { weight: 0, length: 0 };
   for (const tree of trees) {
     for (const leaf of tree.foliage || []) {
+      biggestLeaf.weight = max(biggestLeaf.weight, leaf.weight);
+      biggestLeaf.length = max(biggestLeaf.length, leaf.length);
       const reach = leaf.length / 2; // leaves are centred on (x, y)
       const firstColumn = max(0, floor((leaf.x - reach) / leafCoverageCellSize));
       const lastColumn = min(columnCount - 1, floor((leaf.x + reach) / leafCoverageCellSize));
