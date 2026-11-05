@@ -1,4 +1,4 @@
-// User input: leaf sway on hover, bursts + rings on click.
+// User input: leaf sway + bush rustle on hover, bursts + rings on click.
 //
 // HOVER — "leaf sway" (trees only)
 // Nothing is drawn on top of the scene: the tree's own leaf marks move.
@@ -14,7 +14,15 @@
 //      breeze instead of jittering. Everything is multiplied by `strength`,
 //      so leaves glide back to exactly where they started.
 //   4. Redraw: sketch.js only redraws the patch around the swaying leaves
-//      (getSwayArea → redrawArea), and nothing at all once they're still.
+//      (getSwayAreas → redrawArea), and nothing at all once they're still.
+//
+// HOVER — "bush rustle" (bushes only)
+// The same machinery (a second LeafSway with its own settings) moves the
+// crisp marks on a bush instead: smaller patches, faster and twitchier, more
+// turn than shift, so it reads as leaves flicking against each other rather
+// than a slow breeze. Only the marks move; the blurred mass stays put. It
+// starts when the cursor is over a bush and not on tree leaves (trees are in
+// front, as in getRegion), and calms just like the sway.
 //
 // CLICK
 // On a tree or bush, a handful of Burst pieces (blossom / leaf bits) shoot
@@ -41,15 +49,31 @@ const swayFadeOutTime = 0.18; // seconds to ease back to still (≈ 3.5× this t
 const swayFollowTime = 0.15; // seconds the swaying patch takes to catch up with the cursor [≥ 0]; try 0.05–0.3
 const swayEdgeSoftness = 10; // px over which the redrawn circle fades into the picture, outside any moving leaf [≥ 0]; try 6–16
 //                              (hides the faint edge left by the browser drawing leaves very slightly differently each time)
+// Bush rustle: same meanings as the sway settings above, tuned quicker and smaller
+const rustleRadius = 80; // px around the cursor in which bush marks rustle [> 0]; try 40–100
+const rustleDistance = 5; // furthest a mark shifts, in mark widths [≥ 0]; try 0.5–2
+const rustleAngle = 0.5; // furthest a mark turns, radians [≥ 0]; try 0.25–0.8
+const rustleSpeed = 2; // how fast the rustle pattern changes [> 0, higher = twitchier]; try 1–3
+const rustlePatchSize = 25; // px over which marks move alike [> 0, smaller = more independent flicker]; try 15–50
+const rustleFadeInTime = 0.08; // seconds to ease in [≥ 0]; try 0.05–0.2
+const rustleCalmDelay = 0.15; // seconds the cursor must rest before calming [≥ 0]; try 0.1–0.4
+const rustleFadeOutTime = 0.15; // seconds to ease back to still [≥ 0]; try 0.1–0.3
+const rustleFollowTime = 0.08; // seconds the patch takes to catch up with the cursor [≥ 0]; try 0.03–0.2
 const leafCoverageCellSize = 8; // px per cell of the "where are leaves?" map [> 0, smaller = more exact]; try 4–12
 const burstCount = [10, 18]; // [min, max] pieces per click on a tree/bush [whole numbers ≥ 0]
+const burstPieceSize = { tree: 1, bush: 0.6 }; // piece size as a multiple of the clicked mark's length [> 0]; try 0.5–1.5
+//                                                 (bush marks are long thin dashes, so a smaller share keeps pieces leaf-sized)
+const burstPieceMinSize = 2; // smallest piece in px, so pieces from tiny far-off marks stay visible [> 0]; try 1–4
+const burstPieceMaxSize = 10; // biggest piece in px, so the biggest near leaves don't shed oversized pieces [≥ min]; try 12–30
+//                              (a hard cap: applied after each piece's random size variation)
 const burstLife = 1400; // ms a burst piece lives [> 0]; try 800–2500
 const ringLife = 900; // ms a click ring takes to fade out [> 0]; try 500–1500
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let leafSway = null; // the one LeafSway (made in setupInputElements)
+let leafSway = null; // LeafSway for tree leaves (made in setupInputElements)
+let bushRustle = null; // LeafSway for bush marks (made in setupInputElements)
 let bursts = []; // live Burst pieces
 let rings = []; // live click rings: { x, y, depthScale, age, isWater, colour }
 
@@ -73,28 +97,42 @@ const hitAreas = { tree: [], bush: [] };
 // sway only starts when the cursor is really on leaves, not on sky between them.
 let leafCoverage = null; // { columnCount, rowCount, cells: Uint8Array }
 
-// Size of the biggest tree leaf, found in buildLeafCoverage. Sets how far past
-// swayRadius the redraw patch must reach so no moving leaf gets cut off.
-let biggestLeaf = { weight: 0, length: 0 };
-
 // ---------------------------------------------------------------------------
-// LeafSway: how much the leaves near the cursor are swaying right now.
-// One shared state for the whole scene, so there are no seams between patches.
+// LeafSway: how much the marks near the cursor are swaying right now.
+// One shared state per kind of target (tree leaves, bush marks), so there are
+// no seams between patches.
+//   settings: { radius, distance, angle, speed, patchSize, fadeInTime,
+//               calmDelay, fadeOutTime, followTime, edgeSoftness, noiseOffset }
+//   isOverTarget(x, y): is the cursor on something this instance moves?
 // ---------------------------------------------------------------------------
 class LeafSway {
-  constructor() {
+  constructor(settings, isOverTarget) {
+    this.settings = settings;
+    this.isOverTarget = isOverTarget;
     this.strength = 0; // 0 = still … 1 = full sway
     this.centreX = 0; // middle of the swaying patch: trails the cursor slightly
     this.centreY = 0;
-    this.isOverLeaves = false; // is the cursor on a tree's leaves?
-    this.lastMovedAt = -Infinity; // millis() of the last cursor move over leaves
+    this.isOver = false; // is the cursor on a target?
+    this.lastMovedAt = -Infinity; // millis() of the last cursor move over a target
     this.swayTime = 0; // how far along the noise pattern we are; advances only while swaying
+    // Size of the biggest mark this instance moves (set by setBiggestMark on
+    // each repaint). Sets how far past `radius` the redraw patch must reach so
+    // no moving mark gets cut off.
+    this.biggestMark = { weight: 0, length: 0 };
+  }
+
+  setBiggestMark(marks) {
+    this.biggestMark = { weight: 0, length: 0 };
+    for (const mark of marks) {
+      this.biggestMark.weight = max(this.biggestMark.weight, mark.weight);
+      this.biggestMark.length = max(this.biggestMark.length, mark.length);
+    }
   }
 
   // Step 1 — called on every cursor move (or with null when it leaves the canvas)
   noticeCursor(position) {
-    this.isOverLeaves = position !== null && isOverTreeLeaves(position.x, position.y);
-    if (!this.isOverLeaves) return;
+    this.isOver = position !== null && this.isOverTarget(position.x, position.y);
+    if (!this.isOver) return;
     this.lastMovedAt = millis();
     // starting from still: begin the patch right where the cursor arrived
     if (this.strength === 0) {
@@ -105,20 +143,21 @@ class LeafSway {
 
   // Step 2 — called once per frame: ease the strength toward its target
   update(deltaSeconds) {
-    // full sway while the cursor is on leaves and has moved recently; still otherwise
-    const movedRecently = millis() - this.lastMovedAt < swayCalmDelay * 1000;
-    const targetStrength = this.isOverLeaves && movedRecently ? 1 : 0;
-    const easeTime = targetStrength > this.strength ? swayFadeInTime : swayFadeOutTime;
+    const settings = this.settings;
+    // full sway while the cursor is on a target and has moved recently; still otherwise
+    const movedRecently = millis() - this.lastMovedAt < settings.calmDelay * 1000;
+    const targetStrength = this.isOver && movedRecently ? 1 : 0;
+    const easeTime = targetStrength > this.strength ? settings.fadeInTime : settings.fadeOutTime;
     this.strength = approach(this.strength, targetStrength, easeTime, deltaSeconds);
     if (targetStrength === 0 && this.strength < 0.03) this.strength = 0; // too small to see: stop
     if (this.strength === 0) return;
 
     // the patch glides after the cursor instead of jumping with it
     if (cursorScenePosition) {
-      this.centreX = approach(this.centreX, cursorScenePosition.x, swayFollowTime, deltaSeconds);
-      this.centreY = approach(this.centreY, cursorScenePosition.y, swayFollowTime, deltaSeconds);
+      this.centreX = approach(this.centreX, cursorScenePosition.x, settings.followTime, deltaSeconds);
+      this.centreY = approach(this.centreY, cursorScenePosition.y, settings.followTime, deltaSeconds);
     }
-    this.swayTime += swaySpeed * deltaSeconds;
+    this.swayTime += settings.speed * deltaSeconds;
   }
 
   // The circle sketch.js must redraw, or null when still:
@@ -127,12 +166,13 @@ class LeafSway {
   // edge fades out *beyond* the moving leaves, so none is ever cut or faded.
   getArea() {
     if (this.strength === 0) return null;
-    const radius = this.reachOfMovingLeaves() + swayEdgeSoftness;
+    const softEdge = this.settings.edgeSoftness;
+    const radius = this.reachOfMovingLeaves() + softEdge;
     return {
       centreX: this.centreX,
       centreY: this.centreY,
       radius,
-      softEdge: swayEdgeSoftness,
+      softEdge,
       x: this.centreX - radius,
       y: this.centreY - radius,
       w: radius * 2,
@@ -147,44 +187,47 @@ class LeafSway {
   // length: half its length plus outline nudges, curve overshoot and stroke,
   // see dab() in utils.js) and 2 px for anti-aliasing.
   reachOfMovingLeaves() {
-    const biggestShift = swayDistance * biggestLeaf.weight;
+    const { radius } = this.settings;
+    const biggestShift = this.settings.distance * this.biggestMark.weight;
     let furthestLeafCentre = 0;
-    for (let distance = 0; distance <= swayRadius; distance++) {
-      const shift = smoothFalloff(distance, swayRadius) * biggestShift;
+    for (let distance = 0; distance <= radius; distance++) {
+      const shift = smoothFalloff(distance, radius) * biggestShift;
       furthestLeafCentre = max(furthestLeafCentre, distance + shift);
     }
-    return furthestLeafCentre + biggestLeaf.length + 2;
+    return furthestLeafCentre + this.biggestMark.length + 2;
   }
 
-  // Step 3 — one leaf: return it unchanged, or a slightly moved copy
+  // Step 3 — one leaf (or bush mark): return it unchanged, or a slightly moved copy
   moveLeaf(leaf) {
     if (this.strength === 0) return leaf;
+    const settings = this.settings;
     const distanceToCentre = dist(leaf.x, leaf.y, this.centreX, this.centreY);
-    const amount = this.strength * smoothFalloff(distanceToCentre, swayRadius);
+    const amount = this.strength * smoothFalloff(distanceToCentre, settings.radius);
     if (amount === 0) return leaf;
 
     // noise() is smooth in space and time: leaves close together get similar
     // values (they move as a patch), and each value drifts slowly as swayTime
-    // advances. The +100 / +200 offsets give x, y and angle their own patterns.
+    // advances. The +100 / +200 offsets give x, y and angle their own patterns,
+    // and noiseOffset keeps the sway and the rustle from sharing one.
     // (noise() doesn't use p5's random() stream, so the scene layout is safe.)
-    const noiseX = leaf.x / swayPatchSize;
-    const noiseY = leaf.y / swayPatchSize;
+    const noiseX = leaf.x / settings.patchSize + settings.noiseOffset;
+    const noiseY = leaf.y / settings.patchSize;
     const shiftX = (noise(noiseX, noiseY, this.swayTime) - 0.5) * 2;
     const shiftY = (noise(noiseX + 100, noiseY, this.swayTime) - 0.5) * 2;
     const turn = (noise(noiseX + 200, noiseY, this.swayTime) - 0.5) * 2;
 
     // x and y can both peak at once, which would carry a leaf ~1.4× further
-    // diagonally than swayDistance; scale the pair back so the total stays
-    // within swayDistance (keeps the redraw circle tight, see getArea)
+    // diagonally than the distance setting; scale the pair back so the total stays
+    // within the distance setting (keeps the redraw circle tight, see getArea)
     const shiftLength = Math.hypot(shiftX, shiftY);
     const shiftLimit = shiftLength > 1 ? 1 / shiftLength : 1;
 
-    const shiftSize = amount * swayDistance * leaf.weight * shiftLimit;
+    const shiftSize = amount * settings.distance * leaf.weight * shiftLimit;
     return {
       ...leaf,
       x: leaf.x + shiftX * shiftSize,
       y: leaf.y + shiftY * shiftSize,
-      angle: leaf.angle + turn * swayAngle * amount,
+      angle: leaf.angle + turn * settings.angle * amount,
     };
   }
 }
@@ -199,7 +242,9 @@ class Burst {
     this.colour = colour; // [h, s, b]
     this.size = size;
     const launchAngle = randomBetween(0, TWO_PI);
-    const launchSpeed = randomBetween(80, 260) * (size / 6); // px per second, bigger near the viewer
+    // px per second: bigger pieces fly a bit further, capped so huge near
+    // pieces don't shoot off-screen and tiny far ones still move
+    const launchSpeed = randomBetween(80, 260) * constrain(size / 6, 0.5, 2);
     this.velocityX = cos(launchAngle) * launchSpeed;
     this.velocityY = sin(launchAngle) * launchSpeed - launchSpeed * 0.4; // bias upward: flung off the branch
     this.angle = randomBetween(0, TWO_PI);
@@ -238,14 +283,47 @@ class Burst {
 // Called from setup(): start tracking the cursor. Pointer events fire
 // between frames, so the cursor is noticed the moment it lands on leaves.
 function setupInputElements() {
-  leafSway = new LeafSway();
+  leafSway = new LeafSway(
+    {
+      radius: swayRadius,
+      distance: swayDistance,
+      angle: swayAngle,
+      speed: swaySpeed,
+      patchSize: swayPatchSize,
+      fadeInTime: swayFadeInTime,
+      calmDelay: swayCalmDelay,
+      fadeOutTime: swayFadeOutTime,
+      followTime: swayFollowTime,
+      edgeSoftness: swayEdgeSoftness,
+      noiseOffset: 0,
+    },
+    isOverTreeLeaves,
+  );
+  bushRustle = new LeafSway(
+    {
+      radius: rustleRadius,
+      distance: rustleDistance,
+      angle: rustleAngle,
+      speed: rustleSpeed,
+      patchSize: rustlePatchSize,
+      fadeInTime: rustleFadeInTime,
+      calmDelay: rustleCalmDelay,
+      fadeOutTime: rustleFadeOutTime,
+      followTime: rustleFollowTime,
+      edgeSoftness: swayEdgeSoftness,
+      noiseOffset: 500, // its own noise pattern, separate from the tree sway
+    },
+    isOverBush,
+  );
   window.addEventListener("pointermove", (event) => {
     cursorScenePosition = windowToScene(event.clientX, event.clientY);
     leafSway.noticeCursor(cursorScenePosition);
+    bushRustle.noticeCursor(cursorScenePosition);
   });
   document.addEventListener("pointerleave", () => {
     cursorScenePosition = null;
     leafSway.noticeCursor(null);
+    bushRustle.noticeCursor(null);
   });
 }
 
@@ -257,27 +335,58 @@ function swayLeaf(leaf) {
   return leafSway.moveLeaf(leaf);
 }
 
-// Called once per frame by sketch.js before the hover patch is drawn:
-// advances the sway, then returns the box to redraw, or null when still.
-function getSwayArea() {
-  if (!leafSway) return null;
-  const deltaSeconds = min(deltaTime, 250) / 1000; // capped so a stall doesn't jump
-  leafSway.update(deltaSeconds);
-  return leafSway.getArea();
+// Hover hook for Bush.drawMarks(): same as swayLeaf, for bush marks
+function rustleBushMark(mark) {
+  if (swayPaused || !bushRustle) return mark;
+  return bushRustle.moveLeaf(mark);
 }
 
-// What's under scene point (x, y): "tree", "bush", "water", "track" or "sky".
+// Called once per frame by sketch.js before the hover patches are drawn:
+// advances the sway and the rustle, then returns the circles to redraw
+// (0, 1 or 2 of them; both only briefly, while one calms as the other starts).
+function getSwayAreas() {
+  if (!leafSway) return [];
+  const deltaSeconds = min(deltaTime, 250) / 1000; // capped so a stall doesn't jump
+  const areas = [];
+  for (const sway of [leafSway, bushRustle]) {
+    sway.update(deltaSeconds);
+    const area = sway.getArea();
+    if (area) areas.push(area);
+  }
+  return areas;
+}
+
+// What's under scene point (x, y): "tree" (a leaf mark), "trunk", "bush"
+// (inside a clump's outline), "verge", "water", "track" or "sky".
+function getRegion(x, y) {
+  return getHit(x, y).region;
+}
+
+// Same as getRegion, plus the mark that was hit: { region, mark }. `mark` is
+// the leaf under the point for "tree", the nearest of the clump's marks for
+// "bush", and null otherwise. Clicks use it to size the burst pieces.
 // Trees are drawn over bushes, and nearer things over farther ones, so check
 // in that order (hit areas are stored far → near, hence the reverse loops).
-function getRegion(x, y) {
+// Within a tree, leaves are drawn over the wood, so they're checked first.
+function getHit(x, y) {
   const trees = hitAreas.tree;
+  const nearLeaves = isOverTreeLeaves(x, y); // quick grid check before looking at single leaves
   for (let index = trees.length - 1; index >= 0; index--) {
-    if (pointInTreeArea(x, y, trees[index])) return "tree";
+    const leaf = nearLeaves ? findLeafAt(x, y, trees[index]) : null;
+    if (leaf) return { region: "tree", mark: leaf };
+    if (pointInRect(x, y, trees[index].trunk)) return { region: "trunk", mark: null };
   }
   const bushes = hitAreas.bush;
   for (let index = bushes.length - 1; index >= 0; index--) {
-    if (pointInEllipse(x, y, bushes[index])) return "bush";
+    if (pointInPolygon(x, y, bushes[index].outline)) {
+      return { region: "bush", mark: nearestMark(x, y, bushes[index].marks) };
+    }
   }
+  return { region: groundRegion(x, y), mark: null };
+}
+
+// Sky or ground (no tree or bush): "sky", "verge", "water" or "track"
+function groundRegion(x, y) {
   if (!vanishingPoint || y < vanishingPoint.y) return "sky";
 
   // Work lane() backwards: screen y → `along`, then compare x with the road edges
@@ -286,7 +395,7 @@ function getRegion(x, y) {
   const roadLeft = lane(along, leftEdge(along)).x;
   const roadRight = lane(along, rightEdge(along)).x;
   const across = (x - roadLeft) / (roadRight - roadLeft);
-  if (across < 0 || across > 1) return "bush"; // grassy verge: treated like the undergrowth
+  if (across < 0 || across > 1) return "verge"; // open grass beside the road, outside any bush
   // The tyre ruts (same bands drawRoad() paints) hold rainwater in the
   // paintings, so they ripple like water; the rest is dry track.
   const inRut = (across > 0.22 && across < 0.36) || (across > 0.64 && across < 0.78);
@@ -302,16 +411,20 @@ function isOverTreeLeaves(x, y) {
   return leafCoverage.cells[row * leafCoverage.columnCount + column] === 1;
 }
 
+// Is (x, y) on a bush (and not on tree leaves, which are drawn in front)?
+function isOverBush(x, y) {
+  if (isOverTreeLeaves(x, y)) return false;
+  return hitAreas.bush.some((area) => pointInPolygon(x, y, area.outline));
+}
+
 // Fill the leaf coverage grid: mark every cell a leaf (incl. its size) touches
 function buildLeafCoverage(trees) {
   const columnCount = ceil(width / leafCoverageCellSize);
   const rowCount = ceil(height / leafCoverageCellSize);
   const cells = new Uint8Array(columnCount * rowCount);
-  biggestLeaf = { weight: 0, length: 0 };
+  leafSway.setBiggestMark(trees.flatMap((tree) => tree.foliage || []));
   for (const tree of trees) {
     for (const leaf of tree.foliage || []) {
-      biggestLeaf.weight = max(biggestLeaf.weight, leaf.weight);
-      biggestLeaf.length = max(biggestLeaf.length, leaf.length);
       const reach = leaf.length / 2; // leaves are centred on (x, y)
       const firstColumn = max(0, floor((leaf.x - reach) / leafCoverageCellSize));
       const lastColumn = min(columnCount - 1, floor((leaf.x + reach) / leafCoverageCellSize));
@@ -384,7 +497,13 @@ function updateInputElements() {
 function handleInputClick() {
   const point = windowToScene(winMouseX, winMouseY);
   if (!point) return;
-  const region = getRegion(point.x, point.y);
+  const { region, mark } = getHit(point.x, point.y);
+  // only a leaf or a bush reacts to a click; sky, road, grass and bare wood do
+  // nothing. getRegion's shapes slightly overshoot the drawn leaves, so also
+  // check the picture itself: something must be painted at this exact pixel
+  // (isPaintedOverBase, sketch.js), not bare sky showing between leaves
+  if (region !== "tree" && region !== "bush") return;
+  if (!isPaintedOverBase(point.x, point.y)) return;
   const depthScale = laneScaleAt(point.y);
 
   rings.push({
@@ -396,18 +515,20 @@ function handleInputClick() {
     colour: pickRingColour(region),
   });
 
-  if (region === "tree" || region === "bush") {
-    // trees shed blossom and leaves; bushes mostly leaves
-    const colours =
-      region === "tree"
-        ? [palette.blossom, palette.blossomLight, palette.leaf, palette.leafLight]
-        : [palette.leaf, palette.leafLight, palette.grassLight];
-    const count = floor(randomBetween(burstCount[0], burstCount[1] + 1));
-    const pieceSize = lerp(3, 10, constrain(depthScale, 0, 1)); // bigger near the viewer
-    for (let index = 0; index < count; index++) {
-      const colour = colours[floor(Math.random() * colours.length)];
-      bursts.push(new Burst(point.x, point.y, colourToHsb(colour), pieceSize * randomBetween(0.7, 1.3)));
-    }
+  // trees shed blossom and leaves; bushes mostly leaves
+  const colours =
+    region === "tree"
+      ? [palette.blossom, palette.blossomLight, palette.leaf, palette.leafLight]
+      : [palette.leaf, palette.leafLight, palette.grassLight];
+  const count = floor(randomBetween(burstCount[0], burstCount[1] + 1));
+  // pieces match the stroke that was clicked: small far-off leaves shed small
+  // bits, big near ones shed big bits (falls back to depth if there's no mark)
+  const pieceSize = mark ? mark.length * burstPieceSize[region] : lerp(3, 10, constrain(depthScale, 0, 1));
+  for (let index = 0; index < count; index++) {
+    const colour = colours[floor(Math.random() * colours.length)];
+    // vary each piece a little, then clamp so no piece passes the max
+    const size = constrain(pieceSize * randomBetween(0.7, 1.3), burstPieceMinSize, burstPieceMaxSize);
+    bursts.push(new Burst(point.x, point.y, colourToHsb(colour), size));
   }
 }
 
@@ -415,13 +536,9 @@ function handleInputClick() {
 // the objects in draw order, each time the scene is repainted.
 function registerHitAreas(kind, objects) {
   if (kind === "bush") {
-    // matches the blob in Bush's constructor: radiusX ≤ 0.65 size, radiusY 0.5 size
-    hitAreas.bush = objects.map((bush) => ({
-      x: bush.x,
-      y: bush.y - bush.size * 0.425,
-      rx: bush.size * 0.55,
-      ry: bush.size * 0.5,
-    }));
+    // the clump's own wobbly outline: the solid blob its marks sit on
+    hitAreas.bush = objects.map((bush) => ({ outline: bush.outline, marks: bush.marks }));
+    bushRustle.setBiggestMark(objects.flatMap((bush) => bush.marks));
   } else if (kind === "tree") {
     hitAreas.tree = objects.filter((tree) => tree.branches).map(treeHitArea);
     buildLeafCoverage(objects);
@@ -432,33 +549,13 @@ function registerHitAreas(kind, objects) {
 // Tree hit areas (specific to this file; general shape tests are in utils.js)
 // ---------------------------------------------------------------------------
 
-// Canopy = ellipse around every branch tip (padded for the leaf clumps), plus
-// the trunk as a thin box from the base to the trunk top
+// The tree's leaf marks (checked one by one, see findLeafAt), its bounds
+// (to skip trees nowhere near), and the trunk as a thin box from the base to
+// the trunk top
 function treeHitArea(tree) {
-  let minX = tree.trunkTop.x;
-  let maxX = tree.trunkTop.x;
-  let minY = tree.trunkTop.y;
-  let maxY = tree.trunkTop.y;
-  let leafPadding = 0;
-  const includeBranch = (branch) => {
-    minX = min(minX, branch.endX);
-    maxX = max(maxX, branch.endX);
-    minY = min(minY, branch.endY);
-    maxY = max(maxY, branch.endY);
-    // leaf clumps spill past the outer tips by up to a clump radius
-    if (!branch.children.length) {
-      leafPadding = max(leafPadding, branch.length * treeSettings.clumpSize[1]);
-    }
-    branch.children.forEach(includeBranch);
-  };
-  tree.branches.forEach(includeBranch);
   return {
-    canopy: {
-      x: (minX + maxX) / 2,
-      y: (minY + maxY) / 2,
-      rx: (maxX - minX) / 2 + leafPadding,
-      ry: (maxY - minY) / 2 + leafPadding,
-    },
+    leaves: tree.foliage || [],
+    bounds: tree.bounds,
     trunk: {
       x: min(tree.x, tree.trunkTop.x) - tree.baseWidth,
       y: tree.trunkTop.y,
@@ -468,7 +565,34 @@ function treeHitArea(tree) {
   };
 }
 
-// Is (x, y) on this tree: its trunk or its canopy?
-function pointInTreeArea(x, y, treeArea) {
-  return pointInRect(x, y, treeArea.trunk) || pointInEllipse(x, y, treeArea.canopy);
+// The leaf mark of this tree at (x, y), or null. A dab is about its length
+// long and a little narrower, so a circle of half its length around its
+// centre is a close fit. Leaves are drawn in order, so the last match is the
+// one on top. Only runs on a click, so scanning every leaf is fine.
+function findLeafAt(x, y, treeArea) {
+  if (!pointInRect(x, y, treeArea.bounds)) return null;
+  const leaves = treeArea.leaves;
+  for (let index = leaves.length - 1; index >= 0; index--) {
+    const leaf = leaves[index];
+    const reach = leaf.length / 2;
+    const offsetX = x - leaf.x;
+    const offsetY = y - leaf.y;
+    if (offsetX * offsetX + offsetY * offsetY <= reach * reach) return leaf;
+  }
+  return null;
+}
+
+// The mark whose centre is closest to (x, y), or null if there are none.
+// Bush marks cover the whole blob, so there's always one close by.
+function nearestMark(x, y, marks) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const mark of marks) {
+    const distanceSquared = (mark.x - x) ** 2 + (mark.y - y) ** 2;
+    if (distanceSquared < nearestDistance) {
+      nearest = mark;
+      nearestDistance = distanceSquared;
+    }
+  }
+  return nearest;
 }

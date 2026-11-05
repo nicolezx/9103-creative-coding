@@ -77,6 +77,8 @@ const cacheSettings = {
   frameBudgetMs: 12, // ms per frame spent on a background repaint [> 0]; try 6–20
   //                    (higher = colours catch up sooner, but frames get slower while repainting)
   fadeFrames: 8, // frames to cross-fade a finished repaint in [whole number ≥ 1]; try 4–16
+  paintedOverThreshold: 4, // summed RGB difference (0–765) above which a pixel counts as covered by a bush/tree,
+  //                          for clicks (isPaintedOverBase) [≥ 0]; try 2–10 (just above anti-aliasing noise)
 };
 // Two sets of buffers: `current` is on screen, `pending` is being repainted
 let buffers = null; // { current: { scene, base }, pending: { scene, base } } (p5.Graphics; base = under bushes/trees)
@@ -202,8 +204,8 @@ function draw() {
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
   drawBuffer(buffers.current.scene); // the saved picture
 
-  const swayArea = getSwayArea(); // patch of swaying leaves, if any (user-input.js)
-  if (swayArea) redrawArea(swayArea);
+  // patches of swaying tree leaves / rustling bush marks, if any (user-input.js)
+  for (const swayArea of getSwayAreas()) redrawArea(swayArea);
   // after the patch, so a cross-fade covers the patch too (otherwise the patch
   // shows the new colours while the rest is mid-fade: a visible square)
   drawFadingPicture();
@@ -468,6 +470,23 @@ function drawBuffer(buffer) {
   context.setTransform(1, 0, 0, 1, 0, 0); // raw pixels, no pixel-density scale
   context.drawImage(buffer.elt, 0, 0);
   context.restore();
+}
+
+// Is a bush or tree actually painted at scene point (x, y)? Compares the saved
+// picture with its base layer (sky + ground, before any bush or tree): where
+// they match, the click landed on bare sky or ground. Exact to the pixel, so
+// it catches gaps between leaves that the shape tests in user-input.js (circles
+// around leaves, bush outlines) slightly overshoot. Reads 1 pixel per buffer,
+// so it's cheap enough for clicks (not for every pointer move).
+function isPaintedOverBase(x, y) {
+  if (!buffers || !sceneBushes) return false;
+  const density = buffers.current.scene.pixelDensity();
+  const pixelX = floor(x * density);
+  const pixelY = floor(y * density);
+  const picture = buffers.current.scene.drawingContext.getImageData(pixelX, pixelY, 1, 1).data;
+  const base = buffers.current.base.drawingContext.getImageData(pixelX, pixelY, 1, 1).data;
+  const difference = abs(picture[0] - base[0]) + abs(picture[1] - base[1]) + abs(picture[2] - base[2]);
+  return difference > cacheSettings.paintedOverThreshold;
 }
 
 function mousePressed() {
