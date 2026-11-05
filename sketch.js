@@ -17,7 +17,7 @@ let seed = 11;
 
 // Debug overlays (D toggles)
 const debug = {
-  treeLabels: true, // label each tree's trunk base with its side + `along` value
+  treeLabels: false, // label each tree's trunk base with its side + `along` value
 };
 
 // Perspective
@@ -106,6 +106,7 @@ function setup() {
   strokeWeight(3);
   strokeCap(ROUND);
   frameRate(FRAME_RATE); // loop at a low rate — see FRAME_RATE near clock settings above
+  setupInputElements(); // hover glints + click bursts (user-input.js)
 }
 
 function draw() {
@@ -137,6 +138,11 @@ function draw() {
   drawGrass();
   drawBushes(); // after the ground so it doesn't cover them, before the trees so they sit in front
   drawTrees();
+  updateInputElements(); // glints, rings and bursts on top of the scene (user-input.js)
+}
+
+function mousePressed() {
+  handleInputClick(); // bursts from trees/bushes, rings everywhere (user-input.js)
 }
 
 function keyPressed() {
@@ -388,6 +394,7 @@ function drawTrees() {
       new Tree(point.x, point.y, treeHeight, kind, side),
   );
   for (const tree of trees) tree.draw();
+  registerHitAreas("tree", trees); // so hover/click know where trees are (user-input.js)
 
   if (debug.treeLabels) drawTreeLabels(placements);
 }
@@ -450,6 +457,7 @@ function drawBushes() {
 
   bushes.sort((a, b) => a.y - b.y); // far → near
   for (const bush of bushes) bush.draw();
+  registerHitAreas("bush", bushes); // so hover/click know where bushes are (user-input.js)
 
   randomSeed(seed); // reset so the trees get exactly the same layout as before
 }

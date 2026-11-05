@@ -22,7 +22,7 @@ What exists today vs. what the rest of this doc describes as the target design. 
 | Colour pipeline         | built       | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`    |
 | Weather simulation      | planned     | Only `weatherStub.rain` in `sketch.js` (W key cycles 0 / 0.5 / 1). No noise, rain drops, `moisture` or `temperature` yet |
 | Puddle                  | planned     |                                                                                                   |
-| Interaction / creatures | planned     | No click/hover handling, no `actors.js`                                                           |
+| Interaction / creatures | partial     | `user-input.js`: hover glints (`ColourBlock` grid) + click bursts/rings (`Burst`). No tree shake, reaction table or creatures yet |
 | Render layers / caching | planned     | Whole scene is redrawn every frame at `FRAME_RATE` (8 fps); no cached static layer                |
 | HUD                     | partial     | `index.html` + `style.css`: current time is live; Temperature / Conditions labels are placeholders |
 
@@ -87,7 +87,17 @@ If a change needs to break one of these rules, raise it with the team first. Don
 - `getTimeOfDay()` formats the HUD clock.
 - **Planned:** `sunAltitude`, `sunSide` (−1 morning / +1 evening) for shadows and lighting.
 
-### Interaction (planned — `actors.js`)
+### Interaction (partial — `user-input.js`; planned — `actors.js`)
+
+**Built (`user-input.js`):**
+
+- **Hover glint:** the canvas is a `columns × rows` grid of `ColourBlock`s. Blocks within `hoverRadius` of the cursor take a highlight colour from the region underneath (`getRegion()` → `tree` / `bush` / `water` / `track` / `sky`; `pickHighlight()` picks from `treePalette` … `skyPalette`), drawn with `blendMode(SCREEN)` so it only lightens, then fade back over `glintDuration`. Region palettes are rebuilt every frame from `palette`, so highlights follow time and weather. Grass verges count as `bush`; the tyre ruts count as `water` (until the puddle exists).
+- **Click:** `handleInputClick()` spawns `Burst` pieces (blossom/leaf dabs with drag + gravity) on trees and bushes, and a ring everywhere (a flattened ripple on `water`).
+- **Hit areas:** `drawTrees()` / `drawBushes()` call `registerHitAreas()` with the objects they drew; trees = padded canopy ellipse + trunk box, bushes = ellipse matching the `Bush` blob.
+- **Cursor mapping:** `toScene()` converts window px to scene px, accounting for the CSS `object-fit: cover` crop (p5's `mouseX` doesn't).
+- Pointer moves are handled in a `pointermove` listener, so glints start along the cursor's path even though the scene only redraws at `FRAME_RATE`; the fade itself is only visible at that rate.
+
+**Planned:**
 
 - Click a tree → `shake()` sets an amplitude that decays over ~1 s. Hover → light rustle.
 - A **reaction table** decides what happens. First row whose condition passes and isn't cooling down wins:
@@ -124,7 +134,7 @@ Don't hard-code colours in scene code — always go through `palette`.
 
 ## 5. Drawing conventions
 
-- **Everything is a filled shape + a field of marks**, drawn sky first, then far → near. Current order in `draw()`: sky → ground base coat → road → grass → bushes → trees.
+- **Everything is a filled shape + a field of marks**, drawn sky first, then far → near. Current order in `draw()`: sky → ground base coat → road → grass → bushes → trees → input overlay (glints, rings, bursts; `updateInputElements()`).
 - **Perspective:** all ground placement goes through `lane(along, across)` (`along`: 0 = viewer's feet, 1 = vanishing point; `across`: 0 = left road edge, 1 = right; outside 0–1 = verges). It returns `{ x, y, scale }`, where `scale` sizes marks. Changing the composition means changing the `perspective` settings (horizon, vanishing point, road width, compression, curve, zoom) — never scattering new coordinates.
 - **Mark counts:** wrap counts in `marks(n)` so density holds at any canvas size.
 - **Mark kit (`utils.js`):** use the shared marks rather than ad-hoc `line()` / `ellipse()` calls.
@@ -165,7 +175,7 @@ Today everything is redrawn every frame at `FRAME_RATE`. Target:
 
 ## 6. File structure
 
-Scripts are plain (non-module) `<script>` tags sharing globals; load order in `index.html` matters: `colors.js` → `time.js` → `utils.js` → `trees.js` → `bushes.js` → `sketch.js`.
+Scripts are plain (non-module) `<script>` tags sharing globals; load order in `index.html` matters: `colors.js` → `time.js` → `utils.js` → `trees.js` → `bushes.js` → `sketch.js` → `user-input.js`.
 
 **Existing**
 
@@ -176,6 +186,7 @@ Scripts are plain (non-module) `<script>` tags sharing globals; load order in `i
 | `utils.js`    | `lane()` perspective, verge placement, `marks()`, mark kit (`dash`, `blade`, `dab`), `jitter`, `mixRGB`, `sharpDensity` |
 | `trees.js`    | `Tree` (recursive bending branches, leaf clumps) + bezier helpers                                          |
 | `bushes.js`   | `Bush` (one blurred undergrowth clump)                                                        |
+| `user-input.js` | Hover glints (`ColourBlock`), click bursts (`Burst`) + rings, region lookup (`getRegion`), tree/bush hit areas, cursor → scene mapping. Settings (`hoverRadius`, `glintDuration`, `columns`, `rows`, …) at the top |
 | `sketch.js`   | p5 entry point, settings (`perspective`, `treeSettings`, `bushSettings`, `clock`, `FRAME_RATE`), draw order, scene passes, `weatherStub`, input |
 | `index.html`  | Script order + HUD markup (time / temperature / conditions)                                   |
 | `style.css`   | Canvas scaling (cover the window) + HUD styling                                               |
@@ -203,6 +214,8 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 | `w` | Cycle `weatherStub.rain` 0 → 0.5 → 1 (temporary, until the Weather layer exists) |
 | `d` | Toggle debug tree labels (side + `along` value at each trunk)            |
 | `r` | Redraw                                                                  |
+| hover | Glint: nearby colours lighten toward the region's highlight palette, then fade |
+| click | Blossom/leaf burst on a tree or bush; ring (ripple on the ruts) anywhere |
 
 ---
 
@@ -238,6 +251,7 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 - [ ] Store tree branch data once and redraw per frame for sway and shake; re-enable far trees
 - [ ] Cache the static layer instead of redrawing the whole scene every frame
 - [ ] Per-mark variant swatches (`VARIANTS` hooks in `colors.js` / `time.js`)
-- [ ] Interaction: tree click/hover, reaction table, creatures; add a night reaction (owl or bats)
+- [x] Hover glints and click bursts (`user-input.js`)
+- [ ] Interaction: tree shake, reaction table, creatures; add a night reaction (owl or bats)
 - [ ] Puddle, with a muddy rim, stretched along the lane
 - [ ] Move settings + colour data into `config.js`
