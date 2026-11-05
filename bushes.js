@@ -59,7 +59,7 @@ class Bush {
           random() < settings.curvedShare
             ? random([-1, 1]) * random(0.5, 1) * settings.markBend
             : 0,
-        colour: jitter(palette.bush, 10, 10, 12),
+        colour: jitter(palette.bush, ...settings.markJitter),
       });
     }
   }

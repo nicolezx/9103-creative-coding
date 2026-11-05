@@ -57,6 +57,9 @@ const bushSettings = {
   markLength: 0.07, // dash length as a fraction of clump size [> 0]; try 0.03–0.12
   curvedShare: 0.4, // fraction of dashes drawn curved [0–1, 0 = all straight]; try 0.2–0.6
   markBend: 0.15, // max bow of a curved dash, as a fraction of its length [≥ 0]; try 0.05–0.3
+  // per-mark colour variation around palette.bush, as ± [hue°, saturation, brightness].
+  // Hue kept tight so marks read as one plant; brightness carries the texture.
+  markJitter: [0, 8, 6], // [each ≥ 0, 0 = flat colour]; try hue 0–5, saturation 3–10, brightness 5–12
   markWeight: 0.025, // dash thickness as a fraction of clump size (min 1px) [> 0]; try 0.01–0.04
   blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
@@ -483,9 +486,22 @@ function isPaintedOverBase(x, y) {
   const density = buffers.current.scene.pixelDensity();
   const pixelX = floor(x * density);
   const pixelY = floor(y * density);
-  const picture = buffers.current.scene.drawingContext.getImageData(pixelX, pixelY, 1, 1).data;
-  const base = buffers.current.base.drawingContext.getImageData(pixelX, pixelY, 1, 1).data;
-  const difference = abs(picture[0] - base[0]) + abs(picture[1] - base[1]) + abs(picture[2] - base[2]);
+  const picture = buffers.current.scene.drawingContext.getImageData(
+    pixelX,
+    pixelY,
+    1,
+    1,
+  ).data;
+  const base = buffers.current.base.drawingContext.getImageData(
+    pixelX,
+    pixelY,
+    1,
+    1,
+  ).data;
+  const difference =
+    abs(picture[0] - base[0]) +
+    abs(picture[1] - base[1]) +
+    abs(picture[2] - base[2]);
   return difference > cacheSettings.paintedOverThreshold;
 }
 
