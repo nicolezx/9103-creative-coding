@@ -278,7 +278,7 @@ class Tree {
             length: markLength * random(0.7, 1.3),
             weight: max(1.2, markLength * 0.6),
             colour: jitter(colours[pass], 8, 10, 10),
-            bend: random(-0.2, 0.2),
+            bend: random(-0.2, 0.2), // each diamond leans a different direction
           });
         }
       }
@@ -318,24 +318,24 @@ class Tree {
       this.kind === "blossom"
         ? [palette.blossom, palette.blossomLight]
         : [palette.bush, palette.leaf];
-    // for (let i = 0; i < this.height * 4; i++) {
-    //   const angle = random(TWO_PI);
-    //   const radius = sqrt(random()); // sqrt spreads points evenly across the disc
-    //   const wobble = 0.8 + 0.4 * noise(cos(angle) + this.x * 0.1, sin(angle));
-    //   dash(
-    //     this.x + cos(angle) * radius * crownRadiusX * wobble,
-    //     crownY + sin(angle) * radius * crownRadiusY * wobble,
-    //     random(TWO_PI),
-    //     random(2, 5),
-    //     random(1.5, 3),
-    //     jitter(
-    //       i < this.height * 2 ? crownColours[0] : crownColours[1],
-    //       10,
-    //       10,
-    //       12,
-    //     ),
-    //   );
-    // }
+    // scatter dabs across an elliptical crown; sqrt(random()) spreads them
+    // evenly across the disc rather than bunching at the centre
+    for (let i = 0; i < this.height * 4; i++) {
+      const angle = random(TWO_PI);
+      const radius = sqrt(random());
+      // noise wobble makes the crown edge ragged and organic
+      const wobble = 0.8 + 0.4 * noise(cos(angle) + this.x * 0.1, sin(angle));
+      // first half of marks use the base colour, second half the lighter pass
+      const dabColour = i < this.height * 2 ? crownColours[0] : crownColours[1];
+      dab(
+        this.x + cos(angle) * radius * crownRadiusX * wobble,
+        crownY + sin(angle) * radius * crownRadiusY * wobble,
+        random(TWO_PI),
+        random(1, 2.5), // far trees are small so diamonds stay tiny
+        0,              // unused by diamond dab
+        jitter(dabColour, 10, 10, 12),
+      );
+    }
   }
 }
 

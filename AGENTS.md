@@ -16,7 +16,7 @@ What exists today vs. what the rest of this doc describes as the target design. 
 | ----------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
 | Base scene              | built       | `sketch.js`: sky gradient, road + tyre tracks, grass verges, flower dots, bushes, trees           |
 | Perspective (`lane()`)  | built       | `utils.js`; tuned via `perspective` in `sketch.js`                                                |
-| Trees                   | partial     | `trees.js` `Tree`: recursive bending branches + stored leaf marks (`buildFoliage()`). Rebuilt from the seed on each repaint; far-tree path disabled; no sway/shake yet |
+| Trees                   | partial     | `trees.js` `Tree`: recursive bending branches + stored leaf/blossom dab clusters (`buildFoliage()`). Rebuilt from the seed on each repaint; far-tree crown written (`drawFar()`) but `this.far` still disabled; no sway/shake yet |
 | Bushes                  | built       | `bushes.js` `Bush`, placed by `drawBushes()` in `sketch.js`                                       |
 | Time of day             | built       | `time.js`: 60 s virtual day (or real clock), 4 colour keyframes, pause                            |
 | Colour pipeline         | built       | `colors.js` data + `time.js` `resolvePalette()`: time keyframes + weather offset → `palette.*`    |
@@ -143,10 +143,10 @@ Don't hard-code colours in scene code — always go through `palette`.
 
   | Mark     | Function  | Shape                          | For                     |
   | -------- | --------- | ------------------------------ | ----------------------- |
-  | Dash     | `dash()`  | straight, round ends           | road, bark, bush marks  |
-  | Blade    | `blade()` | tapered, slightly bent stroke  | grass clumps            |
-  | Dab      | `dab()`   | short, thick, slightly curved  | bush marks, leaves, grass accents |
-  | Scribble | planned   | 3–5 noise-nudged points        | blossom, ragged edges   |
+  | Dash     | `dash()`  | straight, round ends                   | road, bark, bush marks  |
+  | Blade    | `blade()` | tapered, slightly bent stroke          | grass clumps            |
+  | Dab      | `dab()`   | organic blob: 4 Catmull-Rom control points in a loose diamond, no straight edges; outline nudges come from a position hash, so a mark looks the same every redraw | leaves, foliage accents, curved bush marks |
+  | Scribble | planned   | 3–5 noise-nudged points                | blossom, ragged edges   |
 
 - **Trees (`trees.js`):** recursive branches with bezier bends, generated in the `Tree` constructor and drawn from that data. Placement comes from the `leftTrees` / `rightTrees` `along` lists in `buildTrees()`; size from `treeSettings.sizeFactor`. Leaves are clumps of `dab()` marks around the outer branches, generated once by `buildFoliage()` (shadow → mid → light pass, settings in `treeSettings`) and stored in `tree.foliage`, like `Bush` marks. Drawing (`drawWood()` + `drawLeaves()`) uses no `random()`, so any part of the scene can be redrawn on its own. Every tree is built, then every tree's foliage, before any is drawn: that keeps the `random()` order (and the look) fixed. `tree.bounds` / `bush.bounds` are boxes used by partial redraws. **Target:** add sway/shake as a per-node angle accumulating down the tree, and give only the nearest 2–3 trees full branching (`drawFar()` exists but `this.far` is currently disabled).
 - **Bushes (`bushes.js`):** overlapping `Bush` clumps along each verge, placed through `lane()` by `drawBushes()` (settings in `bushSettings`) and drawn far → near. Each clump is a solid noise-wobbled blob in a slightly jittered `palette.bush` shade, softened with a canvas blur (`drawingContext.filter`, applied to that fill only), with optional crisp dashes on top. Don't build bushes from branch skeletons.
