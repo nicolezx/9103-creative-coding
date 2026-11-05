@@ -153,17 +153,31 @@ function dab(x, y, angle, size, weight, colour, bend = 0, shapeSeed = hash01(x, 
   const p1 = [x + perpX * (halfWid + bendAmt)    + wobble(), y + perpY * (halfWid + bendAmt)    + wobble()]; // right side (widened by bend)
   const p2 = [x - alongX * halfLen               + wobble(), y - alongY * halfLen               + wobble()]; // trailing tip
   const p3 = [x - perpX * (halfWid - bendAmt)    + wobble(), y - perpY * (halfWid - bendAmt)    + wobble()]; // left side (narrowed by bend)
-  // Catmull-Rom closed curve: repeat the last point as a phantom before the
-  // start and the first point as a phantom after the end so the curve closes
-  // smoothly with no seam. endShape() without CLOSE avoids a straight closing line.
-  beginShape();
-  curveVertex(...p3); // phantom start (= last point)
-  curveVertex(...p0);
-  curveVertex(...p1);
-  curveVertex(...p2);
-  curveVertex(...p3);
-  curveVertex(...p0); // phantom end (= first point)
-  endShape();
+  // Catmull-Rom curve p0 → p1 → p2 → p3 (p3 and p0 repeated as the curve's
+  // lead-in / lead-out points), written as bezier segments straight onto the
+  // canvas: exactly what p5's beginShape + 6 × curveVertex drew, without its
+  // per-call overhead (this runs for every leaf: ~90k marks a repaint, and
+  // every frame in the hover patch). As with p5, the side p3 → p0 isn't
+  // curved: the fill closes it, the outline leaves it open.
+  // fill() / stroke() / strokeWeight() above have already set the canvas's
+  // colours and line width.
+  const points = [p3, p0, p1, p2, p3, p0];
+  const context = drawingContext;
+  context.beginPath();
+  context.moveTo(p0[0], p0[1]);
+  for (let i = 1; i <= 3; i++) {
+    const before = points[i - 1];
+    const from = points[i];
+    const to = points[i + 1];
+    const after = points[i + 2];
+    context.bezierCurveTo(
+      from[0] + (to[0] - before[0]) / 6, from[1] + (to[1] - before[1]) / 6,
+      to[0] + (from[0] - after[0]) / 6, to[1] + (from[1] - after[1]) / 6, // same arithmetic order as p5
+      to[0], to[1],
+    );
+  }
+  context.fill();
+  context.stroke();
 }
 
 // ---------------------------------------------------------------------------
@@ -279,11 +293,14 @@ function laneScaleAt(y) {
 // Resizing helper
 // ---------------------------------------------------------------------------
 // Backing pixels per design pixel so the canvas is crisp once it covers the
-// window (scaled by whichever axis needs to stretch more)
+// window (scaled by whichever axis needs to stretch more), capped at
+// cacheSettings.maxPixelDensity: every buffer, repaint, blur and copy costs
+// density² — uncapped, a large Retina screen reached ~4.5 (20× the pixels of
+// the design size) for marks that already look sharp at 2.
 function sharpDensity() {
   const coverScale = max(
     windowWidth / canvasWidth,
     windowHeight / canvasHeight,
   );
-  return coverScale * window.devicePixelRatio;
+  return min(coverScale * window.devicePixelRatio, cacheSettings.maxPixelDensity);
 }
