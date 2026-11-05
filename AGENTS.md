@@ -89,6 +89,7 @@ If a change needs to break one of these rules, raise it with the team first. Don
 
 - `getDayFraction()` returns 0 → 1 across the day (0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm). It's computed from `millis()` minus time spent paused, so pausing freezes it and resuming continues from the same moment. Day length and start hour live in `clock` in `sketch.js`.
 - `useRealClock` (T key) switches to the system wall clock.
+- `stepHour(±1)` (→ / ← keys) pauses and moves the paused time to the next / previous full hour; `togglePause()` resumes from wherever the paused time is. Weather advances by a forward jump shorter than 1 h (e.g. 3:20 → 4:00) and ignores longer or backward ones (`virtualHoursSinceLastFrame()` in noise.js).
 - `_STOPS` maps hours to colour keyframes: midnight → Night, 6:00 → Dusk, 9:00 → GoldenHour, noon → Day, then mirrored. Transitions are smoothstepped.
 - `getDaylight()` → 0 (night) to 1 (noon), from `_DAYLIGHT` per keyframe, eased the same way as the colours.
 - `getTimeOfDay()` formats the HUD clock.
@@ -224,6 +225,7 @@ Tunable numbers (durations, thresholds, cooldowns, colours) belong in a settings
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `t`   | Toggle virtual ↔ real (wall) clock                                                                                                    |
 | `p`   | Pause / resume the clock                                                                                                              |
+| `→` / `←` | Pause and jump to the next / previous full hour (`stepHour()` in time.js); `p` resumes from there                              |
 | `w`   | Toggle the noise weather on / off (off = dry, mean temperature)                                                                       |
 | `d`   | Toggle debug tree labels (side + `along` value at each trunk)                                                                         |
 | `r`   | Redraw                                                                                                                                |
