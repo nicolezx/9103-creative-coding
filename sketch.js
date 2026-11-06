@@ -57,6 +57,20 @@ const treeSettings = {
   trunkDepthMax: 0.08, // [0–1]; try 0.04–0.15
 };
 
+// Grass tufts drawn in front of each trunk base (Tree.buildFrontGrass in trees.js), so trunks
+// stand in the verge instead of sitting on top of it. Blade size follows the verge grass (clump()).
+const frontGrassSettings = {
+  spread: 0.9, // how far the tufts reach either side of the trunk centre, in trunk base widths
+  //              [> 0, 0.5 = just the trunk's own width]; try 0.6–1.5
+  tuftGap: 0.4, // space between tufts, in blade lengths [> 0, smaller = denser, slower]; try 0.25–0.8
+  bladesPerTuft: [3, 6], // [min, max) blades per tuft [whole numbers ≥ 1, min < max]; try [2–4, 5–8]
+  lengthScale: 1.2, // blade length vs. the verge grass at that depth [> 0, 1 = same]; try 0.8–1.6
+  weightScale: 1, // blade thickness vs. the verge grass [> 0]; try 0.7–1.5
+  fan: 0.55, // max lean of a blade from upright, radians [≥ 0]; try 0.3–0.8
+  drop: [-0.05, 0.2], // [min, max] how far below the trunk base each tuft is rooted, in trunk base widths
+  //                     (> 0 = lower, in front of it) [min ≤ max]; try [-0.1–0, 0.1–0.4]
+};
+
 const bushSettings = {
   baseAcross: 0.1, // where the clumps' road-side edge starts, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
   //                   (keep ≥ treeSettings.roadsideAcrossLeft max so bushes start behind the tree line, not under the trunks)
@@ -347,6 +361,9 @@ function* sceneSteps() {
     tree.buildFoliage();
     yield;
   }
+  // after all the foliage, so these random() calls come last and the trees'
+  // layout is unchanged
+  for (const tree of trees) tree.buildFrontGrass(tree.laneScale);
   const leavesPerStep = 1500; // big near trees have ~10k leaf marks: split them up
   for (const tree of trees) {
     tree.drawWood();
@@ -356,6 +373,9 @@ function* sceneSteps() {
       tree.drawLeaves(null, i, min(i + leavesPerStep, tree.shownLeaves));
       yield;
     }
+    // right after its own tree: covers this trunk's base, and nearer trees
+    // (drawn later) still cover it
+    tree.drawFrontGrass();
   }
   if (debug.treeLabels) drawTreeLabels(placements);
   findOpenStars(stars); // which stars nothing covers, so they can twinkle (drawTwinkle)
@@ -393,6 +413,12 @@ function growLeaves() {
         tree.shownLeaves = to;
         grew = true;
         const boxes = tree.foliage.slice(from, to).map(leafBox);
+        // a low leaf may land on this tree's own front grass: put it back on top
+        const onGrass = tree.grassBounds
+          ? boxes.filter((box) => rectsOverlap(box, tree.grassBounds))
+          : [];
+        if (onGrass.length > 0)
+          withBoxesClip(onGrass, () => tree.drawFrontGrass());
         for (const nearer of sceneTrees.slice(index + 1)) {
           const covered = boxes.filter((box) =>
             rectsOverlap(box, nearer.bounds),
@@ -439,18 +465,26 @@ function redrawTreeOver(tree, boxes) {
   for (const box of boxes)
     cellsOf(box.x, box.y, box.w, box.h, (cell) => void touched.add(cell));
 
-  const context = drawingContext;
-  push(); // not context.save(): see withClip
-  context.beginPath();
-  for (const box of boxes) context.rect(box.x, box.y, box.w, box.h);
-  context.clip(); // the union of the boxes: nothing outside them is touched
-  try {
+  withBoxesClip(boxes, () => {
     tree.drawWood();
     for (let index = 0; index < tree.shownLeaves; index++) {
       const box = leafBox(tree.foliage[index]);
       if (cellsOf(box.x, box.y, box.w, box.h, (cell) => touched.has(cell)))
         tree.drawLeaves(null, index, index + 1);
     }
+    tree.drawFrontGrass(); // still in front of its trunk
+  });
+}
+
+// Run `drawing` clipped to the union of `boxes`: nothing outside them is touched
+function withBoxesClip(boxes, drawing) {
+  const context = drawingContext;
+  push(); // not context.save(): see withClip
+  context.beginPath();
+  for (const box of boxes) context.rect(box.x, box.y, box.w, box.h);
+  context.clip();
+  try {
+    drawing();
   } finally {
     pop();
   }
@@ -1240,6 +1274,8 @@ function buildTrees() {
       new Tree(point.x, point.y, treeHeight, kind, side),
   );
   darkenTrunksWithDepth(allTrees, placements); // before the filter, while indices still match
+  // lane() scale at each trunk base, so its front grass matches the verge there
+  allTrees.forEach((tree, i) => (tree.laneScale = placements[i].point.scale));
   const trees = allTrees.filter((tree) => !tree.far);
   return { trees, placements };
 }
