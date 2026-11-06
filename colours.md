@@ -77,11 +77,9 @@ e.g. `getWeatherOffset(weather.rain, weather.moisture)`, with each role reading 
 
 **Change.** Give `leaf` its own non-Day keyframes, a little darker and bluer than grass so canopies read against the verges.
 
-### 2.4 Sky gradient can't express dusk
+### 2.4 Sky gradient — done (needs tuning)
 
-`skyTop` and `skyLow` both come from the single `sky` role (`skyLow` is just +0.12 lightness). That can't show a sky that is dark at the top and warm at the horizon, which is the main dusk / golden-hour look.
-
-**Change.** Split `sky` into `skyTop` + `skyLow` roles (or add a `horizon` role) in every `WEATHER_SETS` entry and in `TIME_KEYFRAMES`.
+`skyLow` is now its own role in every `WEATHER_SETS` entry and in `TIME_KEYFRAMES`, and `resolvePalette()` uses it for `palette.skyLow`. Still to do: tune the GoldenHour / Dusk / Night `skyLow` values (they start as the matching sky + 0.12 lightness, the old derived horizon), e.g. a warmer glow under the pink dusk sky.
 
 ### 2.5 Star colour lives outside the colour data
 

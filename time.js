@@ -345,19 +345,19 @@ function resolvePalette(timeBase, weatherOffset, daylight) {
   // _offsetHsb(dry base, c[role]) applied to the variant). Marks would pick an
   // index once and call it instead of jitter(palette.x, …).
 
-  // Expand 8 roles → all palette keys that sketch.js uses.
+  // Expand 9 roles → all palette keys that sketch.js uses.
   // Light/dark variants come from shifting OKLab L — no extra keyframe entry needed.
   return {
     skyTop: _toColor(c.sky),
-    skyLow: _toColor(_adjustL(c.sky, +0.12)), // horizon lighter than zenith
+    skyLow: _toColor(c.skyLow), // horizon: its own role, so dusk can glow low down
     cloud: _toColor(_adjustL(c.sky, +0.28)), // clouds near-white
     bush: _toColor(c.bush), // undergrowth / hedge
     road: _toColor(c.road),
     track: _toColor(c.rut),
     ridge: _toColor(_adjustL(c.rut, +0.12)),
     grass: _toColor(c.grass),
-    grassDark: _toColor(_adjustL(c.grass, -0.12)),
-    grassLight: _toColor(_adjustL(c.grass, +0.14)),
+    grassDark: _toColor(_adjustL(c.grass, -0.05)),
+    grassLight: _toColor(_adjustL(c.grass, +0.05)),
     trunk: _toColor(c.trunk),
     leaf: _toColor(c.leaf),
     leafDark: _toColor(_adjustL(c.leaf, -0.1)),

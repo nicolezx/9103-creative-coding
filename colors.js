@@ -5,7 +5,8 @@
 // Blending happens in OKLab inside time.js; these arrays are storage only.
 //
 // Roles (same keys in every structure below):
-//   sky, bush, trunk, road, rut, grass, leaf, flower
+//   sky, skyLow, bush, trunk, road, rut, grass, leaf, flower
+//   (sky = top of the sky, skyLow = at the horizon; drawn as a gradient)
 //
 // How the two structures combine (see time.js):
 //   1. TIME_KEYFRAMES are blended by time of day.
@@ -23,39 +24,42 @@ const WEATHER_SETS = {
   dry: {
     source: "31-may-no-2", // painting title/date sampled from
     base: {
-      sky: [195, 22.9, 96.1], // #BDE7F5
-      bush: [90, 69.5, 75.7], // #7EC13B
-      trunk: [2.6, 45, 80], // #CC7470
+      sky: [201.1, 35.3, 97.6], // #A1DAF9
+      skyLow: [195, 22.9, 96.1], // #BDE7F5
+      bush: [90, 69.4, 75.7], // #7EC13B
+      trunk: [2.6, 45.1, 80], // #CC7470
       road: [321.6, 10.1, 96.9], // #F7DEEE
-      rut: [318.8, 47.9, 83.5], // #D56FB5
-      grass: [98.9, 64.4, 78], // #74C747
+      rut: [319.4, 43.4, 86.7], // #DD7DBE
+      grass: [98.9, 64.3, 78], // #74C747
       leaf: [143.3, 89.1, 64.7], // #12A54B
-      flower: [61.1, 21.6, 98.4], // #FAFBC5
+      flower: [61.1, 21.5, 98.4], // #FAFBC5
     },
   },
   overcast: {
     source: "17-april",
     base: {
-      sky: [242.7, 9.5, 90.6], // #D2D1E7
-      bush: [151, 91, 39.3], // #096438
+      sky: [210, 13.7, 97.3], // #D6E7F8
+      skyLow: [242.7, 9.5, 90.6], // #D2D1E7
+      bush: [151, 91, 39.2], // #096438
       trunk: [58.5, 29.5, 54.5], // #8B8A62
-      road: [56, 7.3, 81.1], // #CFCEC0
-      rut: [58.5, 20.3, 75.2], // #C0BF99
-      grass: [133.2, 79.2, 71.7], // #26B746
-      leaf: [72.2, 98.6, 85.8], // #AFDB03
+      road: [56, 7.2, 81.2], // #CFCEC0
+      rut: [58.5, 20.3, 75.3], // #C0BF99
+      grass: [133.2, 79.2, 71.8], // #26B746
+      leaf: [72.2, 98.6, 85.9], // #AFDB03
       flower: [60, 16.9, 92.9], // #EDEDC5
     },
   },
   wet: {
     source: "18-december",
     base: {
-      sky: [12, 2.2, 89.8], // #E5E1E0
-      bush: [108, 20.6, 28.7], // #3D493A
-      trunk: [19.7, 59.4, 46.2], // #764730
+      sky: [200, 2.5, 95.3], // #EDF1F3
+      skyLow: [12, 2.2, 89.8], // #E5E1E0
+      bush: [108, 20.5, 28.6], // #3D493A
+      trunk: [19.7, 59.3, 46.3], // #764730
       road: [19, 36.6, 43.9], // #705447
       rut: [24.3, 39.4, 36.9], // #5E4839
       grass: [126.9, 47.3, 50.6], // #44814B
-      leaf: [117, 43.5, 54.2], // #518A4E
+      leaf: [117, 43.5, 54.1], // #518A4E
       flower: [61.4, 18.9, 91.4], // #E8E9BD
     },
   },
@@ -73,51 +77,60 @@ const WEATHER_SETS = {
 const _dry = WEATHER_SETS.dry.base; // short alias for the Day column below
 const TIME_KEYFRAMES = {
   sky: [
-    _dry.sky, // #BDE7F5 Day
-    [45, 27.6, 91], // #E8D8A8 GoldenHour
-    [27.1, 55.9, 94.9], // #F2A86B Dusk
+    _dry.sky, // #A1DAF9 Day
+    [45, 27.6, 91], // #87b3e0 GoldenHour
+    [322, 22.1, 87.1], // #595f9b Dusk
     [234, 62.5, 31.4], // #1E2350 Night
+  ],
+  // Horizon colours. GoldenHour/Dusk/Night start as the matching sky above,
+  // lightened (+0.12 OKLab L, the old derived horizon), so they look as before
+  // until tuned.
+  skyLow: [
+    _dry.skyLow, // #BDE7F5 Day
+    [60, 19.6, 100], // #dc885f GoldenHour
+    [315, 17.3, 100], // #de9bcd Dusk
+    [231.4, 48.7, 45.1], // #3B4373 Night
   ],
   bush: [
     _dry.bush, // #7EC13B Day
-    [81.7, 47.3, 59.6], // #7E9850 GoldenHour
-    [78.8, 39.4, 47.8], // #6B7A4A Dusk
-    [180, 46.5, 22.8], // #1F3A3A Night
+    [81.7, 47.4, 59.6], // #7E9850 GoldenHour
+    [78.8, 39.3, 47.8], // #6B7A4A Dusk
+    [180, 46.6, 22.7], // #1f2d3a Night
   ],
   trunk: [
     _dry.trunk, // #CC7470 Day
-    [20.3, 56.3, 43.2], // #6E4530 GoldenHour
+    [20.3, 56.4, 43.1], // #6E4530 GoldenHour
     [16.6, 64.4, 35.3], // #5A3020 Dusk
     [285, 34.8, 18], // #2A1E2E Night
   ],
   road: [
     _dry.road, // #F7DEEE Day
-    [30, 32.2, 87.8], // #E0BC98 GoldenHour
+    [30, 32.1, 87.8], // #E0BC98 GoldenHour
     [24, 48.4, 85.1], // #D99A70 Dusk
-    [251.1, 28.2, 37.7], // #4A4560 Night
+    [251.1, 28.1, 37.6], // #4A4560 Night
   ],
   rut: [
-    _dry.rut, // #D56FB5 Day
+    _dry.rut, // #DD7DBE Day
     [20.8, 61.2, 62.7], // #A0603E GoldenHour
-    [17.3, 65.2, 54.2], // #8A4A30 Dusk
+    [17.3, 65.2, 54.1], // #8A4A30 Dusk
     [256.4, 34.4, 25.1], // #302A40 Night
   ],
   grass: [
     _dry.grass, // #74C747 Day
-    [75, 64.1, 78.4], // #A8C848 GoldenHour
+    [75, 64, 78.4], // #A8C848 GoldenHour
     [63.8, 60, 62.7], // #9AA040 Dusk
-    [140, 53.4, 35.3], // #2A5A3A Night
+    [140, 53.3, 35.3], // #2a445a Night
   ],
   leaf: [
     _dry.leaf, // #12A54B Day
-    [75, 64.1, 78.4], // #A8C848 GoldenHour
-    [63.8, 60, 62.7], // #9AA040 Dusk
-    [140, 53.4, 35.3], // #2A5A3A Night
+    [123.8, 50.5, 74.5], // #6fca56 GoldenHour
+    [96.9, 58.8, 46.7], // #4C7731 Dusk
+    [140, 53.3, 35.3], // #2a485a Night
   ],
   flower: [
     _dry.flower, // #FAFBC5 Day
-    [239.2, 70.9, 78.4], // #3A3CC8 GoldenHour
-    [270, 62.4, 60.4], // #6A3A9A Dusk
-    [236.5, 63.8, 62.7], // #3A40A0 Night
+    [45.1, 50, 98], // #FADB7D GoldenHour
+    [270, 30, 81.2], // #B091CF Dusk
+    [236.5, 63.8, 62.7], // #5a5d8e Night
   ],
 };
