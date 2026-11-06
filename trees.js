@@ -121,6 +121,7 @@ class Tree {
     if (this.far) return this.drawFar();
     this.drawWood();
     this.drawLeaves(area, 0, this.shownLeaves); // only the leaves grown so far
+    this.drawFrontGrass(area); // last: it stands in front of the trunk base
   }
   // trunk + branches
   drawWood() {
@@ -385,6 +386,95 @@ class Tree {
     this.branches.forEach(walk);
     for (const mark of this.foliage) grow(mark.x, mark.y, mark.length * 2);
     this.bounds = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+  // Grass in front of the trunk base, so the trunk grows out of the verge
+  // instead of ending in a hard flat edge on top of it. Tufts of blades (like
+  // the verge's clump() in sketch.js) spread across the base, sized from
+  // `laneScale` (the lane() scale where the tree stands) so they match the
+  // surrounding grass. Generated once with random() and stored, like the
+  // foliage, so hover patches and leaf growth can redraw it without random();
+  // each blade keeps the colour it had when built (the palette drifts, the
+  // saved picture doesn't). Also grows this.bounds to cover it.
+  buildFrontGrass(laneScale) {
+    this.frontGrass = [];
+    if (this.far) return;
+    const settings = frontGrassSettings;
+    const meanLength = lerp(3, 30, laneScale) * settings.lengthScale;
+    const halfSpan = this.baseWidth * settings.spread;
+    // enough tufts to cover the span at any size, gap set in blade lengths
+    const tuftCount = constrain(
+      round((halfSpan * 2) / max(1, meanLength * settings.tuftGap)),
+      2,
+      40,
+    );
+    const colours = [palette.grassDark, palette.grass, palette.grassLight];
+    for (let t = 0; t < tuftCount; t++) {
+      // evenly across the base, nudged so tufts don't line up in a row
+      const across = lerp(-1, 1, (t + random(0.1, 0.9)) / tuftCount);
+      const tuftX = this.x + across * halfSpan;
+      const tuftY = this.y + random(...settings.drop) * this.baseWidth;
+      const colour = random(colours);
+      const bladeCount = floor(random(...settings.bladesPerTuft));
+      for (let b = 0; b < bladeCount; b++) {
+        const x = tuftX + random(-3, 3) * laneScale;
+        const angle = -HALF_PI + random(-settings.fan, settings.fan);
+        const length = meanLength * random(0.6, 1.2);
+        const weight = lerp(0.7, 3.6, laneScale) * settings.weightScale;
+        this.frontGrass.push({
+          x,
+          y: tuftY,
+          angle,
+          tipAngle: angle + random(-0.15, 0.15),
+          length,
+          weight,
+          colour: jitter(colour, 10, 10, 10),
+        });
+      }
+    }
+    if (this.frontGrass.length === 0) return;
+    // the box the blades fit in, for partial redraws (redrawArea, growLeaves)
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const blade of this.frontGrass) {
+      const pad = blade.length + blade.weight;
+      minX = min(minX, blade.x - pad);
+      maxX = max(maxX, blade.x + pad);
+      minY = min(minY, blade.y - pad);
+      maxY = max(maxY, blade.y + blade.weight);
+    }
+    this.grassBounds = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    const b = this.bounds;
+    const x = min(b.x, minX);
+    const y = min(b.y, minY);
+    this.bounds = {
+      x,
+      y,
+      w: max(b.x + b.w, maxX) - x,
+      h: max(b.y + b.h, maxY) - y,
+    };
+  }
+  // Draws the stored front grass (no random()). With `area`, only blades
+  // that can reach it.
+  drawFrontGrass(area) {
+    if (!this.frontGrass) return;
+    for (const blade of this.frontGrass) {
+      if (area) {
+        const pad = blade.length + blade.weight;
+        const box = { x: blade.x - pad, y: blade.y - pad, w: pad * 2, h: pad * 2 };
+        if (!rectsOverlap(box, area)) continue;
+      }
+      // same two-part stroke as blade() in utils.js, with the tip angle stored
+      const { x, y, angle, tipAngle, length, weight, colour } = blade;
+      const midX = x + cos(angle) * length * 0.55;
+      const midY = y + sin(angle) * length * 0.55;
+      stroke(colour);
+      strokeWeight(weight);
+      line(x, y, midX, midY);
+      strokeWeight(weight * 0.45);
+      line(midX, midY, x + cos(tipAngle) * length, y + sin(tipAngle) * length);
+    }
   }
   // Distance shortcut: trunk stroke + lumpy blob of marks
   drawFar() {
