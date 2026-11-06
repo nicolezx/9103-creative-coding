@@ -32,6 +32,24 @@ Two separate noise arrays control temperature and humidity levels, which fluctua
 
 All of our reference paintings are set during daytime, so the weather tint fades out at night instead of greying a night sky. Colour blending happens in OKLab, so colours shift smoothly without passing through greys. Rain also dims the stars (`starColour()`).
 
+### Time-based - Kritika
+
+The time-of-day mechanic runs a continuous 24-hour cycle, compressed into 2 minutes, that shifts every colour in the scene through four named phases: Night, Dusk, Golden Hour and Day.
+
+**Clock:** `getDayFraction()` reads elapsed milliseconds from `millis()` and maps them to a 0–1 position in the virtual day, so the speed is consistent regardless of frame rate. A real wall-clock mode (T key) is also available, showing the scene at the actual time of day. The clock can be paused (P) and stepped forward or back one hour at a time (arrow keys).
+
+**Colour keyframes:** Four colour states are defined in `TIME_KEYFRAMES` — Day (noon, sampled from the dry Hockney painting), Golden Hour (9am / 3pm), Dusk (6am / 6pm) and Night (midnight). Each frame, `_currentStops()` finds the two nearest keyframes and `getTimeBase()` blends between them using smoothstep easing, so colours linger at each phase and transition briskly in between rather than marching at a fixed rate.
+
+**Colour blending:** All colours are stored as `[h, s, b]` arrays and blended in OKLab, a perceptual colour space, so transitions never pass through muddy greys or take the wrong path around the hue circle. `resolvePalette()` combines the time blend with the weather offset (from `noise.js`) and expands the nine base roles into every named `palette.*` colour the drawing code uses, including light and dark variants derived by shifting OKLab lightness.
+
+**Stars:** `getStarVisibility()` returns a 0–1 opacity that keeps stars at full brightness all night, fades them out between 4am and 5am, and brings them back from 3pm onward. Each star twinkles independently using `noise()` over time. Stars are painted once into the cached scene and redrawn each frame at their current twinkle level, so the cache doesn't need to repaint just because they flicker.
+
+#### Key decisions
+
+- **Smoothstep over linear easing:** A linear clock would make the golden-hour colours flash past. Smoothstep makes the light dwell at each phase the way real daylight does.
+- **OKLab instead of HSB blending:** Blending HSB directly produces grey midpoints and unexpected hue shifts (e.g. orange→blue passes through white). OKLab keeps blends perceptually even.
+- **Weather as an offset, not a separate palette:** Rather than storing a full palette per weather × time combination, the weather contribution is computed as an OKLab difference from the dry baseline and added on top, scaled by `getDaylight()` so it fades out at night.
+
 ### User Input - Kasia
 
 The user input mechanic makes the painted scene respond to the cursor. Hovering
@@ -67,8 +85,6 @@ and `display()` methods handle drag, gravity, spin and fading.
   drops behind leaves.
 
 ## Techniques
-
-// What p5.js techniques were implemented in the project and why? Give a short overview of how your code works and the key decisions your team made.
 
 - **time of day:** a 24-hour cycle compressed into 60 seconds (or the real clock) blends between Night, Dusk, Golden Hour and Day colour keyframes; stars fade in at night and twinkle using `noise()` over time
 - **colour:** all colours are stored as HSB and blended in OKLab, so transitions between times of day and weather don't pass through muddy greys; weather is layered on top of the time-of-day palette as an offset, sampled from three paintings in the series (dry, overcast, wet)
@@ -165,6 +181,37 @@ and `display()` methods handle drag, gravity, spin and fading.
 | OKLab colour blending (`Math.cbrt()`)                      | `getWeatherOffset()` blends dry → overcast → wet      | Colours shift smoothly without passing through muddy greys                     |
 | Array methods: `filter()` and `splice()`                   | Removes finished drops and caps the number of patches | Keeps lists short so the frame rate holds during heavy rain                    |
 | `querySelector()`, `textContent` and CSS custom properties | `updateHud()` and `setMeter()`                        | Shows temperature, humidity and moisture as text and meters                    |
+
+#### Time-based
+
+##### Techniques from class
+
+| Technique                                    | Function                                                                                                                              |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `millis()`                                   | `getDayFraction()` — reads elapsed milliseconds to advance the virtual day at a consistent speed regardless of frame rate             |
+| `for` loops and arrays                       | `_currentStops()` searches the `_STOPS` keyframe schedule; `getTimeBase()` and `getWeatherOffset()` loop over all colour roles        |
+| Functions with parameters and return values  | Every public function (`getDayFraction`, `getTimeBase`, `getDaylight`, `resolvePalette`, etc.) returns a value used by the caller     |
+| `constrain()`                                | Clamps `rain` to 0–1 in `getWeatherOffset()`; clamps the star fade to 0–1 in `getStarVisibility()`                                   |
+| `Math.floor()`                               | `formatTime()` extracts whole hours and minutes from the fractional day for the HUD display                                           |
+| HSB colour mode                              | All colours are stored as `[h, s, b]` arrays; `_toColor()` calls p5's `color()` to convert them into drawable colours                |
+| `keyPressed()`                               | `togglePause()` (P key) and `stepHour()` (arrow keys) are called from `keyPressed()` in `sketch.js`                                  |
+| Settings stored in named objects             | `_STOPS`, `_DAYLIGHT`, `_STARS` and `_STARS_FADE_OUT` are named constants that control the schedule without touching function logic   |
+| Linear interpolation                         | `_blendKeyframeValues()` blends between two keyframe values using `a + (b − a) × t`, the same pattern as p5's `lerp()`               |
+
+##### Techniques from outside class
+
+| Technique                                       | Function                                                               | Why it was needed                                                                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Smoothstep easing (`t² (3 − 2t)`)               | `smoothstepT()` — applied to every keyframe transition                 | Makes colours linger at each phase and blend briskly in between, so the light feels like it dwells at dawn and noon rather than marching evenly |
+| Keyframe interpolation system                   | `_currentStops()` + `getTimeBase()` — finds the two nearest keyframes and blends between them | Lets all 9 colour roles transition in sync without storing a full palette for every hour of the day                           |
+| Virtual compressed day cycle                    | `getDayFraction()` — maps elapsed `millis()` to a 0–1 position in a 60-second virtual day    | A real 24-hour clock is too slow to watch; compressing it lets you observe a full sunrise-to-sunset cycle                     |
+| Real wall clock via `new Date()`                | `getDayFraction()` — alternative mode toggled with T                   | Shows the scene at the actual time of day on the user's device                                                                                 |
+| OKLab colour blending                           | `_blendHsb()`, `_rgbToOklab()`, `_oklabToRgb()` and their helper chain | Blending HSB directly passes through grey or takes the wrong path around the hue circle; OKLab interpolates perceptually and evenly           |
+| `Math.cbrt()` and `Math.pow()`                  | Inside the OKLab conversion pipeline (`_srgbToLinear`, `_linearToSrgb`) | Required by the OKLab specification for the gamma-expansion and cube-root steps                                                               |
+| `Array.prototype.map()`                         | `_offsetHsb()`, `_applyOffset()`, `_blendHsb()` — per-channel colour operations | Lets each blend or shift be written as one expression rather than three separate channel assignments                                    |
+| Destructuring and spread syntax                 | `const { stopA, stopB, t } = _currentStops()` and `color(...hsb)`     | Keeps the code concise when unpacking stop objects and passing colour channels directly to p5's `color()`                                      |
+| `for...in` over object keys                     | `getTimeBase()`, `getWeatherOffset()`, `resolvePalette()`              | Iterates over all colour roles by name so adding a new role doesn't require updating every function separately                                 |
+| Modulo wrapping (`% 1`, `% 24`)                 | `getDayFraction()` for midnight wrap; `stepHour()` to stay within 0–24 | Keeps the clock cycling continuously without an `if` branch to reset it                                                                       |
 
 ## AI acknowledgement
 
