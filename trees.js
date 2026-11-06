@@ -246,10 +246,17 @@ class Tree {
   // (and so the look) the same as when marks were generated while drawing.
   // Also works out this.bounds, the box everything this tree draws fits in.
   buildFoliage() {
-    // the last two levels of branches anchor the clumps (pre-order, as drawn)
+    // Clumps hang on the last two levels of branches (pre-order, as drawn),
+    // but only those that show on the canvas. The nearest trees are taller
+    // than the frame, so their outer branches are far above it and all their
+    // leaves were wasted off-screen, leaving the front trees bare. So a branch
+    // that shows, but whose continuation (every child) leaves the frame, also
+    // gets clumps: it's the furthest part of that limb you can see.
     const anchors = [];
     const collect = (node) => {
-      if (node.depth <= 1) anchors.push(node);
+      const shows = branchShows(node);
+      if (shows && (node.depth <= 1 || !node.children.some(branchShows)))
+        anchors.push(node);
       node.children.forEach(collect);
     };
     this.branches.forEach(collect);
@@ -266,9 +273,18 @@ class Tree {
 
     this.foliage = [];
     for (const anchor of anchors) {
-      const totalCount = round(random(...settings.leavesPerBranch) * sizeScale);
-      const spread = anchor.length * settings.leafDistance;
-      const markLength = max(1.5, anchor.length * settings.leafMarkLength);
+      // size leaves as if on an outer twig: an inner limb is longer (each
+      // level is ~0.71× its parent, see makeBranch), and sizing from its own
+      // length gave oversized leaves and a wide scatter. It gets more leaves
+      // instead, in proportion, so it's as densely covered as a twig
+      const twigLength = anchor.length * pow(0.71, max(0, anchor.depth - 1));
+      const totalCount = round(
+        random(...settings.leavesPerBranch) *
+          sizeScale *
+          (anchor.length / twigLength),
+      );
+      const spread = twigLength * settings.leafDistance;
+      const markLength = max(1.5, twigLength * settings.leafMarkLength);
       for (let pass = 0; pass < 3; pass++) {
         const count = max(1, round(totalCount * passShare[pass]));
         for (let i = 0; i < count; i++) {
@@ -322,6 +338,17 @@ class Tree {
         }
       }
     }
+
+    // drop leaves that landed off the canvas (e.g. past the tip of a limb that
+    // runs out of frame): they'd never be seen, and growth would spend the
+    // season's first leaves on them. After generation, so random() order is kept
+    this.foliage = this.foliage.filter(
+      (leaf) =>
+        leaf.x > -leaf.length &&
+        leaf.x < width + leaf.length &&
+        leaf.y > -leaf.length &&
+        leaf.y < height + leaf.length,
+    );
 
     // Sort by distance to branch tip: seasonal growth fans outward from the ends.
     // No random() calls — only uses already-computed positions — so the layout is unchanged.
@@ -442,4 +469,16 @@ function splitBezierAt([p0, p1, p2, p3], t) {
     [p0, a, d, mid],
     [mid, e, c, p3],
   ];
+}
+
+// Does any part of this branch's curve show on the canvas? Samples the bezier,
+// so a limb that crosses the frame between its ends still counts
+function branchShows(node) {
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    const x = bezierPoint(node.x, node.c1.x, node.c2.x, node.endX, t);
+    const y = bezierPoint(node.y, node.c1.y, node.c2.y, node.endY, t);
+    if (x >= 0 && x <= width && y >= 0 && y <= height) return true;
+  }
+  return false;
 }

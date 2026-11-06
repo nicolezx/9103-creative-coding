@@ -45,18 +45,26 @@ const treeSettings = {
   // [min, max] trunk distance beyond the road edge, in `across` units [≥ 0.07, the road edge wobbles ±0.07]; try 0.08–0.3.
   // Kept close to the road so the trees stand in front of the bushes, which start beyond them (bushSettings.baseAcross)
   roadsideAcross: [0.08, 0.14],
+  // left side only: how far past the left edge a trunk base can sit and still be drawn, as a fraction of
+  // that tree's height [≥ 0, 0 = base must be on-canvas horizontally]; try 0.2–0.8. Bases below the canvas are
+  // always kept as long as the tree's top reaches into the frame
+  offscreenReach: 0.5,
+  // each side: how much darker each trunk is than the one in front of it, in OKLab lightness
+  // (0–1 scale) [≥ 0, 0 = all the same]; try 0.005–0.03. Capped at trunkDepthMax so the far trees don't go muddy
+  trunkDepthStep: 0.012,
+  trunkDepthMax: 0.08, // [0–1]; try 0.04–0.15
 };
 
 const bushSettings = {
-  baseAcross: 0.18, // where the clumps' road-side edge starts, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
+  baseAcross: 0.1, // where the clumps' road-side edge starts, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
   //                   (keep ≥ treeSettings.roadsideAcross max so bushes start behind the tree line, not under the trunks)
   acrossSpread: 0.45, // how much further out from there clumps can sit [≥ 0]; try 0–1
-  spacing: 0.05, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
-  clumpsPerRow: 1, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
-  farAlong: 0.95, // how far toward the vanishing point clumps reach [0–1, 1 = all the way]
-  sizeFactor: [0.5, 0.8], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
+  spacing: 0.03, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
+  clumpsPerRow: 4, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
+  farAlong: 1, // how far toward the vanishing point clumps reach [0–1, 1 = all the way]
+  sizeFactor: [0.8, 1.2], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
   lumpFrequency: 1.4, // how many lobes the outline wobbles into [> 0, higher = more, smaller lobes]; try 0.5–3
-  lumpDepth: 0.22, // how far the lobes push in/out [0–1, 0 = clean ellipse]; try 0–0.4
+  lumpDepth: 0.15, // how far the lobes push in/out [0–1, 0 = clean ellipse]; try 0–0.4
   marksPerClump: 1000, // dashes per clump, spread over the whole blob [whole number ≥ 0, 0 = none, higher = denser but slower]; try 80–300
   markLength: 0.07, // dash length as a fraction of clump size [> 0]; try 0.03–0.12
   curvedShare: 0.4, // fraction of dashes drawn curved [0–1, 0 = all straight]; try 0.2–0.6
@@ -65,7 +73,7 @@ const bushSettings = {
   // Hue kept tight so marks read as one plant; brightness carries the texture.
   markJitter: [0, 8, 6], // [each ≥ 0, 0 = flat colour]; try hue 0–5, saturation 3–10, brightness 5–12
   markWeight: 0.025, // dash thickness as a fraction of clump size (min 1px) [> 0]; try 0.01–0.04
-  blurAmount: 0.01, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
+  blurAmount: 0.008, // blur radius as a fraction of clump size (soft edges) [≥ 0, 0 = sharp]; try 0–0.05
 };
 
 // Road surface dashes (drawRoad).
@@ -1167,8 +1175,14 @@ function buildTrees() {
         const treeHeight =
           point.scale * height * random(...treeSettings.sizeFactor);
         const kind = "leaf";
-        if (point.x < -40 || point.x > width + 40 || point.y > height + 40)
-          continue; // off-canvas (zoom pushes the nearest trees out of frame)
+        // Left foreground trees often have their base below / left of the
+        // canvas (zoom pushes the nearest ones out of frame), but their trunk
+        // and crown still reach in and frame the scene. So only skip a tree
+        // that can't reach the canvas at all: its top is still below the
+        // bottom edge, or its base is more than `offscreenReach` × its height
+        // past the left edge.
+        const reach = treeHeight * treeSettings.offscreenReach;
+        if (point.y - treeHeight > height || point.x < -reach) continue;
         placements.push({ point, treeHeight, kind, side, along });
       }
     } else if (side === 1) {
@@ -1188,13 +1202,33 @@ function buildTrees() {
   }
 
   placements.sort((a, b) => a.point.y - b.point.y); // far → near
-  const trees = placements
-    .map(
-      ({ point, treeHeight, kind, side }) =>
-        new Tree(point.x, point.y, treeHeight, kind, side),
-    )
-    .filter((tree) => !tree.far);
+  const allTrees = placements.map(
+    ({ point, treeHeight, kind, side }) =>
+      new Tree(point.x, point.y, treeHeight, kind, side),
+  );
+  darkenTrunksWithDepth(allTrees, placements); // before the filter, while indices still match
+  const trees = allTrees.filter((tree) => !tree.far);
   return { trees, placements };
+}
+
+// Trunks overlap a lot in the foreground and share one flat bark colour, so
+// they merge into one mass. On each side, every trunk back from that side's
+// front tree gets a little darker (OKLab lightness, like the palette's
+// light/dark variants), so overlapping trunks separate and each row reads as
+// receding. Stored in tree.woodColour, so hover redraws and leaf growth paint
+// the same shade. `trees` and `placements` are in the same (far → near) order.
+function darkenTrunksWithDepth(trees, placements) {
+  const { trunkDepthStep, trunkDepthMax } = treeSettings;
+  const barkHsb = colourToHsb(palette.trunk);
+  for (const side of [-1, 1]) {
+    const sideTrees = trees
+      .filter((tree, i) => placements[i].side === side)
+      .reverse(); // near → far
+    sideTrees.forEach((tree, rank) => {
+      const darken = min(rank * trunkDepthStep, trunkDepthMax);
+      tree.woodColour = _toColor(_adjustL(barkHsb, -darken));
+    });
+  }
 }
 
 // Debug: label each trunk base with its side + `along` value, drawn after all
