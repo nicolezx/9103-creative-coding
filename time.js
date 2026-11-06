@@ -34,7 +34,8 @@ function stepHour(direction) {
   const hour = pausedFraction * 24;
   // the small margin makes a press from exactly 3:00 go to 4:00 / 2:00, and
   // one from 2:59.999 (float drift) go to 4:00, not 3:00
-  const target = direction > 0 ? Math.floor(hour + 0.001) + 1 : Math.ceil(hour - 0.001) - 1;
+  const target =
+    direction > 0 ? Math.floor(hour + 0.001) + 1 : Math.ceil(hour - 0.001) - 1;
   pausedFraction = (((target % 24) + 24) % 24) / 24;
 }
 
@@ -359,7 +360,7 @@ function resolvePalette(timeBase, weatherOffset, daylight) {
     grassLight: _toColor(_adjustL(c.grass, +0.14)),
     trunk: _toColor(c.trunk),
     leaf: _toColor(c.leaf),
-    leafLight: _toColor(_adjustL(c.leaf, +0.18)),
+    leafDark: _toColor(_adjustL(c.leaf, -0.1)),
     blossom: _toColor(c.flower),
     blossomLight: _toColor(_adjustL(c.flower, +0.2)),
     // Flower dots brighten/dim with the sky's overall lightness rather than a

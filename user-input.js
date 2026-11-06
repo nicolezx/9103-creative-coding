@@ -352,12 +352,12 @@ function rustleBushMark(mark) {
 // (0, 1 or 2 of them; both only briefly, while one calms as the other starts).
 function getSwayAreas() {
   if (!leafSway) return [];
-  // Burst colours: tree pieces use the tree foliage's three passes (bush shadow,
-  // leaf, leafLight; see Tree.buildFoliage), bush pieces the bush role in a
+  // Burst colours: tree pieces use the tree foliage colour (leaf; see
+  // Tree.buildFoliage), bush pieces the bush role in a
   // darker / base / lighter shade, like the jittered marks in Bush
   const bushColour = colourToHsb(palette.bush);
   burstColoursByRegion = {
-    tree: [palette.bush, palette.leaf, palette.leafLight].map(colourToHsb),
+    tree: [palette.leaf].map(colourToHsb),
     bush: [shiftBrightness(bushColour, -10), bushColour, shiftBrightness(bushColour, 10)],
   };
 
@@ -417,14 +417,13 @@ function isOverBush(x, y) {
 }
 
 // Fill the leaf coverage grid: mark every cell a leaf (incl. its size) touches.
-// Only includes leaves that have actually been drawn (capped by seasonProgress).
+// Only includes leaves that have actually been drawn (tree.shownLeaves).
 function buildLeafCoverage(trees) {
   const columnCount = ceil(width / leafCoverageCellSize);
   const rowCount = ceil(height / leafCoverageCellSize);
   const cells = new Uint8Array(columnCount * rowCount);
   const drawnLeaves = trees.flatMap((tree) => {
-    const count = floor((tree.foliage || []).length * seasonProgress);
-    return (tree.foliage || []).slice(0, count);
+    return (tree.foliage || []).slice(0, tree.shownLeaves || 0);
   });
   leafSway.setBiggestMark(drawnLeaves);
   for (const leaf of drawnLeaves) {
@@ -460,16 +459,16 @@ function updateInputElements() {
   // Ring colours are the lighter keys of each region's palette, so they match
   // the current time of day (warm at golden hour, dim at night)
   ringColoursByRegion = {
-    tree: [palette.leaf, palette.leafLight].map(colourToHsb),
+    tree: [palette.leaf].map(colourToHsb),
     bush: [palette.bush].map(colourToHsb).map((bush) => shiftBrightness(bush, 15)),
   };
 
-  // Burst colours: tree pieces use the tree foliage's three passes (bush shadow,
-  // leaf, leafLight; see Tree.buildFoliage), bush pieces the bush role in a
+  // Burst colours: tree pieces use the tree foliage colour (leaf; see
+  // Tree.buildFoliage), bush pieces the bush role in a
   // darker / base / lighter shade, like the jittered marks in Bush
   const bushColour = colourToHsb(palette.bush);
   burstColoursByRegion = {
-    tree: [palette.bush, palette.leaf, palette.leafLight].map(colourToHsb),
+    tree: [palette.leaf].map(colourToHsb),
     bush: [shiftBrightness(bushColour, -10), bushColour, shiftBrightness(bushColour, 10)],
   };
 
@@ -535,7 +534,7 @@ function handleInputClick() {
   }
 }
 
-// Record tree / bush hit areas. Called from finishRebuild() (sketch.js) with
+// Record tree / bush hit areas. Called from finishRebuild() and growLeaves() (sketch.js) with
 // the objects in draw order, each time the scene is repainted.
 function registerHitAreas(kind, objects) {
   if (kind === "bush") {
@@ -557,9 +556,8 @@ function registerHitAreas(kind, objects) {
 // the trunk top
 // Written by the Claude AI plugin for VS Code
 function treeHitArea(tree) {
-  const leafCount = floor((tree.foliage || []).length * seasonProgress);
   return {
-    leaves: (tree.foliage || []).slice(0, leafCount),
+    leaves: (tree.foliage || []).slice(0, tree.shownLeaves || 0),
     bounds: tree.bounds,
     trunk: {
       x: min(tree.x, tree.trunkTop.x) - tree.baseWidth,

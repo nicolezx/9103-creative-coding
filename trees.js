@@ -10,6 +10,9 @@ class Tree {
     // patch) must use the same colour as the saved picture, not the live
     // palette, which keeps drifting with the time of day
     this.woodColour = palette.trunk;
+    // how many of this.foliage are painted in the picture this tree belongs
+    // to (set by sceneSteps, then raised by growLeaves as the season goes on)
+    this.shownLeaves = 0;
 
     if (this.far) return;
 
@@ -117,8 +120,7 @@ class Tree {
   draw(area) {
     if (this.far) return this.drawFar();
     this.drawWood();
-    const leafCount = floor(this.foliage.length * seasonProgress);
-    this.drawLeaves(area, 0, leafCount);
+    this.drawLeaves(area, 0, this.shownLeaves); // only the leaves grown so far
   }
   // trunk + branches
   drawWood() {
@@ -216,9 +218,22 @@ class Tree {
       const restingLeaf = this.foliage[index];
       // skip leaves outside the area (padded by two lengths: the leaf's own
       // size plus room for the sway)
-      if (area && !pointInRect(restingLeaf.x, restingLeaf.y, area, restingLeaf.length * 2)) continue;
+      if (
+        area &&
+        !pointInRect(restingLeaf.x, restingLeaf.y, area, restingLeaf.length * 2)
+      )
+        continue;
       const leaf = swayLeaf(restingLeaf);
-      dab(leaf.x, leaf.y, leaf.angle, leaf.length, leaf.weight, leaf.colour, leaf.bend, restingLeaf.shapeSeed);
+      dab(
+        leaf.x,
+        leaf.y,
+        leaf.angle,
+        leaf.length,
+        leaf.weight,
+        leaf.colour,
+        leaf.bend,
+        restingLeaf.shapeSeed,
+      );
     }
   }
   // Leaf clumps: a few rounded clusters of dabs along each outer branch.
@@ -243,11 +258,11 @@ class Tree {
     const colours =
       this.kind === "blossom"
         ? [palette.blossom, palette.blossom, palette.blossomLight]
-        : [palette.bush, palette.leaf, palette.leafLight];
+        : [palette.leafDark, palette.leaf, palette.leaf];
     // far trees get fewer marks; detail is lost at that size anyway
     const sizeScale = min(1, this.height / 500);
     const passShare = [0.3, 0.45, 0.25]; // shadow / mid / light share of each branch's marks
-    const passLift = [0.35, 0, -0.35];   // vertical drift per pass, in spread units (− = up)
+    const passLift = [0.35, 0, -0.35]; // vertical drift per pass, in spread units (− = up)
 
     this.foliage = [];
     for (const anchor of anchors) {
@@ -259,12 +274,36 @@ class Tree {
         for (let i = 0; i < count; i++) {
           // sample a point along the branch, biased toward the outer half
           const t = constrain(random(0.1, 1.1), 0, 1);
-          const bx = bezierPoint(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t);
-          const by = bezierPoint(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t);
+          const bx = bezierPoint(
+            anchor.x,
+            anchor.c1.x,
+            anchor.c2.x,
+            anchor.endX,
+            t,
+          );
+          const by = bezierPoint(
+            anchor.y,
+            anchor.c1.y,
+            anchor.c2.y,
+            anchor.endY,
+            t,
+          );
           // perpendicular to the branch direction at this point, so leaves
           // fan out sideways from the wood rather than piling on top of it
-          const dtx = bezierTangent(anchor.x, anchor.c1.x, anchor.c2.x, anchor.endX, t);
-          const dty = bezierTangent(anchor.y, anchor.c1.y, anchor.c2.y, anchor.endY, t);
+          const dtx = bezierTangent(
+            anchor.x,
+            anchor.c1.x,
+            anchor.c2.x,
+            anchor.endX,
+            t,
+          );
+          const dty = bezierTangent(
+            anchor.y,
+            anchor.c1.y,
+            anchor.c2.y,
+            anchor.endY,
+            t,
+          );
           const tLen = Math.hypot(dtx, dty) || 1;
           const perpX = -dty / tLen;
           const perpY = dtx / tLen;
@@ -275,7 +314,7 @@ class Tree {
             angle: random(TWO_PI),
             length: markLength * random(0.7, 1.3),
             weight: max(1.2, markLength * 0.6),
-            colour: jitter(colours[pass], 8, 10, 10),
+            colour: jitter(colours[pass], 0, 4, 4),
             bend: random(-0.2, 0.2),
           };
           leaf.shapeSeed = hash01(leaf.x, leaf.y, leaf.angle);
@@ -289,7 +328,8 @@ class Tree {
     for (const leaf of this.foliage) {
       let minD = Infinity;
       for (const anchor of anchors) {
-        const dx = leaf.x - anchor.endX, dy = leaf.y - anchor.endY;
+        const dx = leaf.x - anchor.endX,
+          dy = leaf.y - anchor.endY;
         const d2 = dx * dx + dy * dy;
         if (d2 < minD) minD = d2;
       }
@@ -346,7 +386,7 @@ class Tree {
         crownY + sin(angle) * radius * crownRadiusY * wobble,
         random(TWO_PI),
         random(1, 2.5), // far trees are small so diamonds stay tiny
-        0,              // unused by diamond dab
+        0, // unused by diamond dab
         jitter(dabColour, 10, 10, 12),
       );
     }

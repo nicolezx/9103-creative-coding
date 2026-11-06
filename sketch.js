@@ -39,7 +39,7 @@ const perspective = {
 const treeSettings = {
   sizeFactor: [1.45, 2], // [min, max] tree height as a fraction of canvas height at lane scale 1 [> 0, min ≤ max]; try 0.8–2.5
   leavesPerBranch: [20, 30], // leaves scattered along each outer branch (all three passes combined) [whole number ≥ 0]; try 6–30
-  leafDistance: 0.30, // LEAF DISTANCE/SPREAD how far leaves stray perpendicular to the branch, as a fraction of branch length [> 0]; try 0.05–0.4
+  leafDistance: 0.3, // LEAF DISTANCE/SPREAD how far leaves stray perpendicular to the branch, as a fraction of branch length [> 0]; try 0.05–0.4
   leafMarkLength: 0.1, // LEAF SIZE leaf dab length as a fraction of branch length [> 0]; try 0.05–0.25
 };
 
@@ -118,7 +118,10 @@ const seasonDays = 0.2; // [> 0]; try 10–40
 // Leaf growth over the season: trees start bare (day 0) and reach full density at seasonDays.
 const leafGrowthSettings = {
   growthDays: seasonDays,
-  batchFraction: 0.02, // trigger a repaint when this fraction of total leaves would newly appear [0–1]; try 0.01–0.05
+  // leaves each tree adds in one go as the season advances; each group is
+  // painted straight onto the saved picture (growLeaves), no repaint needed.
+  // 1 = leaves appear one by one [whole number ≥ 1]; try 1–20
+  leavesAtOnce: 1,
 };
 // Two sets of buffers: `current` is on screen, `pending` is being repainted
 let buffers = null; // { current: { scene, base }, pending: { scene, base } } (p5.Graphics; base = under bushes/trees)
@@ -134,9 +137,8 @@ let sceneTrees = []; // Tree objects in draw order
 // Season: how far through spring leaf growth we are (0 = bare, 1 = full density).
 // Advances with virtual time; never resets (the season moves forward only).
 let seasonProgress = 0;
-let cachedSeasonProgress = null; // seasonProgress when the current cached picture was painted
-let totalVirtualDays = 0;        // accumulated virtual days elapsed (paused time excluded)
-let _lastSeasonFraction = -1;    // getDayFraction() last frame, for the day-delta accumulator
+let totalVirtualDays = 0; // accumulated virtual days elapsed (paused time excluded)
+let _lastSeasonFraction = -1; // getDayFraction() last frame, for the day-delta accumulator
 let sceneStars = []; // star marks (buildStars), kept for twinkling and partial redraws
 let treePlacements = []; // for the debug labels
 
@@ -265,6 +267,9 @@ function draw() {
     startRebuild();
   }
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
+  // after the repaint step, so a picture that just finished gets the leaves
+  // that came due while it was being painted before it is shown
+  growLeaves();
   drawBuffer(buffers.current.scene); // the saved picture
   drawTwinkle(); // stars glow brighter and dimmer (before the hover patches, which draw their own)
 
@@ -323,15 +328,120 @@ function* sceneSteps() {
   for (const tree of trees) {
     tree.drawWood();
     yield; // pause after wood so the budgeter can break before the leaf passes
-    const leafCount = floor(tree.foliage.length * seasonProgress);
-    for (let i = 0; i < leafCount; i += leavesPerStep) {
-      tree.drawLeaves(null, i, min(i + leavesPerStep, leafCount));
+    tree.shownLeaves = leafTarget(tree); // growLeaves() adds the rest as they come due
+    for (let i = 0; i < tree.shownLeaves; i += leavesPerStep) {
+      tree.drawLeaves(null, i, min(i + leavesPerStep, tree.shownLeaves));
       yield;
     }
   }
   if (debug.treeLabels) drawTreeLabels(placements);
   findOpenStars(stars); // which stars nothing covers, so they can twinkle (drawTwinkle)
   return { stars, bushes, trees, placements };
+}
+
+// How many of this tree's leaf marks should be showing now: its share of
+// seasonProgress, rounded down to whole groups of leavesAtOnce (all of them
+// once the season is complete)
+function leafTarget(tree) {
+  const total = tree.foliage.length;
+  if (seasonProgress >= 1) return total;
+  const group = max(1, floor(leafGrowthSettings.leavesAtOnce));
+  return min(total, floor((total * seasonProgress) / group) * group);
+}
+
+// Seasonal growth between repaints: paint each tree's newly due leaves
+// straight onto the saved picture, so they appear a group at a time
+// (leavesAtOnce) instead of in one big batch at the next repaint. Leaves are
+// stored in growth order (buildFoliage), so a new leaf belongs on top of its
+// own tree's shown leaves; nearer trees are then redrawn over it, only where
+// it landed, so it stays behind them.
+function growLeaves() {
+  if (!buffers || sceneTrees.length === 0) return;
+  let grew = false;
+  swayPaused = true; // the picture holds leaves at rest; sway is drawn on top
+  try {
+    drawInto(buffers.current.scene, () => {
+      sceneTrees.forEach((tree, index) => {
+        if (tree.far) return; // far trees draw a crown, not leaf marks
+        const from = tree.shownLeaves;
+        const to = leafTarget(tree);
+        if (to <= from) return;
+        tree.drawLeaves(null, from, to);
+        tree.shownLeaves = to;
+        grew = true;
+        const boxes = tree.foliage.slice(from, to).map(leafBox);
+        for (const nearer of sceneTrees.slice(index + 1)) {
+          const covered = boxes.filter((box) =>
+            rectsOverlap(box, nearer.bounds),
+          );
+          if (covered.length > 0) redrawTreeOver(nearer, covered);
+        }
+        coverStars(boxes);
+      });
+    });
+  } finally {
+    swayPaused = false;
+  }
+  // so hover and clicks find the new leaves (user-input.js)
+  if (grew) registerHitAreas("tree", sceneTrees);
+}
+
+// The box a resting leaf mark fits in (centred on it; padded for its width
+// and anti-aliasing)
+function leafBox(leaf) {
+  const reach = leaf.length + 2;
+  return { x: leaf.x - reach, y: leaf.y - reach, w: reach * 2, h: reach * 2 };
+}
+
+// Repaint `tree` (wood and shown leaves) inside `boxes` only, on top of what
+// is there: puts a nearer tree back in front of leaves just grown behind it.
+// A coarse grid of the boxes picks out the few leaves that touch them, so a
+// big tree isn't checked box by box.
+function redrawTreeOver(tree, boxes) {
+  const cellSize = 16;
+  const columnCount = ceil(width / cellSize);
+  const cellsOf = (x, y, w, h, visit) => {
+    const lastColumn = floor((x + w) / cellSize);
+    const lastRow = floor((y + h) / cellSize);
+    for (let row = max(0, floor(y / cellSize)); row <= lastRow; row++)
+      for (
+        let column = max(0, floor(x / cellSize));
+        column <= lastColumn;
+        column++
+      )
+        if (visit(row * columnCount + column)) return true;
+    return false;
+  };
+  const touched = new Set();
+  for (const box of boxes)
+    cellsOf(box.x, box.y, box.w, box.h, (cell) => void touched.add(cell));
+
+  const context = drawingContext;
+  push(); // not context.save(): see withClip
+  context.beginPath();
+  for (const box of boxes) context.rect(box.x, box.y, box.w, box.h);
+  context.clip(); // the union of the boxes: nothing outside them is touched
+  try {
+    tree.drawWood();
+    for (let index = 0; index < tree.shownLeaves; index++) {
+      const box = leafBox(tree.foliage[index]);
+      if (cellsOf(box.x, box.y, box.w, box.h, (cell) => touched.has(cell)))
+        tree.drawLeaves(null, index, index + 1);
+    }
+  } finally {
+    pop();
+  }
+}
+
+// A leaf grown over an open star covers it, so it must stop twinkling
+// (drawTwinkle restores the star's box from the bare sky, erasing the leaf)
+function coverStars(boxes) {
+  for (const star of sceneStars) {
+    if (!star.open) continue;
+    const reach = (star.arm * star.tall) / 2 + star.lineWeight + 2;
+    if (boxes.some((box) => pointInRect(star.x, star.y, box, reach)))
+      star.open = false;
+  }
 }
 
 function startRebuild() {
@@ -390,7 +500,6 @@ function finishRebuild({ stars, bushes, trees, placements }) {
   registerHitAreas("bush", bushes); // so hover/click know where things are (user-input.js)
   registerHitAreas("tree", trees);
   cachedPaletteLevels = rebuildPalette;
-  cachedSeasonProgress = seasonProgress;
   rebuild = null;
 }
 
@@ -460,9 +569,13 @@ function fadeEdge(buffer, area) {
 
 // Run `drawing` with everything outside `area` masked off: a circle when
 // it has a radius, otherwise its box
+// push()/pop(), not the canvas's own save()/restore(): p5 remembers the last
+// fill/stroke it set and skips setting the same one again, so a bare restore()
+// leaves it out of step (the next fill() could be skipped and paint in a
+// leftover colour). pop() puts p5's memory back in step with the canvas.
 function withClip(area, drawing) {
   const context = drawingContext;
-  context.save();
+  push();
   context.beginPath();
   if (area.radius)
     context.arc(area.centreX, area.centreY, area.radius, 0, TWO_PI);
@@ -471,7 +584,7 @@ function withClip(area, drawing) {
   try {
     drawing();
   } finally {
-    context.restore();
+    pop();
   }
 }
 
@@ -488,10 +601,7 @@ function paletteDrifted() {
       if (abs(now[i] - then[i]) > cacheSettings.colourThreshold) return true;
     }
   }
-  // repaint when enough new leaves would appear, or the final leaf has just unlocked
-  if (cachedSeasonProgress !== null && seasonProgress < 1 &&
-      seasonProgress - cachedSeasonProgress >= leafGrowthSettings.batchFraction) return true;
-  if (cachedSeasonProgress !== null && cachedSeasonProgress < 1 && seasonProgress >= 1) return true;
+  // (new leaves don't need a repaint: growLeaves() paints them in)
   return false;
 }
 
@@ -687,8 +797,10 @@ function buildStars() {
   for (let i = 0; i < columns * rows; i++) {
     const column = i % columns;
     const row = floor(i / columns);
-    const x = (column + margin + hash01(seed, i, 1) * starSettings.scatter) * cellW;
-    const y = (row + margin + hash01(seed, i, 2) * starSettings.scatter) * cellH;
+    const x =
+      (column + margin + hash01(seed, i, 1) * starSettings.scatter) * cellW;
+    const y =
+      (row + margin + hash01(seed, i, 2) * starSettings.scatter) * cellH;
     const height01 = y / lowest; // 0 = top of the sky, 1 = lowest star
     const fadeNearHorizon = 1 - height01 * 0.6; // thinning toward the horizon haze
     const arm = lerp(...starSettings.size, hash01(seed, i, 3)) * sizeScale;
@@ -730,11 +842,32 @@ function drawStarCross(star) {
   const [h, s, b, a] = star.colour;
   const colour = color(h, s, b, min(1, a * twinkle(star)));
   dash(star.x, star.y, star.angle, star.arm, star.lineWeight, colour);
-  dash(star.x, star.y, star.angle + HALF_PI, star.arm * star.tall, star.lineWeight, colour);
+  dash(
+    star.x,
+    star.y,
+    star.angle + HALF_PI,
+    star.arm * star.tall,
+    star.lineWeight,
+    colour,
+  );
   const diagonal = star.arm * starSettings.diagonalLength;
   const diagonalWeight = star.lineWeight * 0.75;
-  dash(star.x, star.y, star.angle + QUARTER_PI, diagonal, diagonalWeight, colour);
-  dash(star.x, star.y, star.angle - QUARTER_PI, diagonal, diagonalWeight, colour);
+  dash(
+    star.x,
+    star.y,
+    star.angle + QUARTER_PI,
+    diagonal,
+    diagonalWeight,
+    colour,
+  );
+  dash(
+    star.x,
+    star.y,
+    star.angle - QUARTER_PI,
+    diagonal,
+    diagonalWeight,
+    colour,
+  );
 }
 
 // How bright a star is right now, as a multiplier on its opacity: wanders
@@ -746,7 +879,11 @@ function twinkle(star) {
   if (swayPaused) return 1;
   const time = (millis() / 1000) * starSettings.twinkleSpeed;
   // stretch noise's mostly-middling values so stars reach both ends of the range
-  const wander = constrain((noise(star.twinkleSeed * 1000, time) - 0.3) / 0.4, 0, 1);
+  const wander = constrain(
+    (noise(star.twinkleSeed * 1000, time) - 0.3) / 0.4,
+    0,
+    1,
+  );
   return lerp(...starSettings.twinkleRange, wander);
 }
 
@@ -877,9 +1014,9 @@ function drawRoad() {
   };
 
   scatterMarks(marks(1800), 0, 1, palette.road, 8, 8, 4); // general surface
-  scatterMarks(marks(500), 0.22, 0.36, palette.track, 6, 8, 4); // left tyre track
-  scatterMarks(marks(500), 0.64, 0.78, palette.track, 6, 8, 4); // right tyre track
-  scatterMarks(marks(350), 0.45, 0.55, palette.ridge, 10, 10, 4); // centre ridge
+  scatterMarks(marks(900), 0.22, 0.36, palette.track, 2, 4, 4); // left tyre track
+  scatterMarks(marks(900), 0.64, 0.78, palette.track, 2, 4, 4); // right tyre track
+  scatterMarks(marks(350), 0.45, 0.55, palette.ridge, 2, 4, 4); // centre ridge
 }
 
 // ---------------------------------------------------------------------------
@@ -963,9 +1100,9 @@ function* drawGrass() {
 // Tree layout: placements from the `along` lists, and a Tree for each (far → near)
 function buildTrees() {
   const placements = [];
-  const leftTrees = [0.04, 0.2, 0.24, 0.38, 0.4, 0.55, 0.7, 0.82, 0.9]; // `along` positions on the lane
+  const leftTrees = [0.04, 0.2, 0.36, 0.4, 0.52, 0.65, 0.8, 0.9]; // `along` positions on the lane
   const rightTrees = [
-    0.02, 0.07, 0.18, 0.22, 0.35, 0.55, 0.7, 0.75, 0.77, 0.82, 0.85, 0.9, 0.91,
+    0.02, 0.07, 0.18, 0.22, 0.35, 0.55, 0.7, 0.74, 0.77, 0.82, 0.85, 0.89, 0.91,
     0.915, 0.94,
   ]; // `along` positions on the lane
 
