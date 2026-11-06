@@ -168,7 +168,7 @@ and `display()` methods handle drag, gravity, spin and fading.
 
 ## AI acknowledgement
 
-// If you used ChatGPT, Claude, DeepSeek, or any other AI tool to help generate code, you must reference it here and explain what it was used for and how the generated code works. This must also be commented in the actual code (e.g. // this code was generated with the help of ChatGPT and does xyz).
+We used the Claude extension on VS code to brainstorm solutions, troubleshoot, and assist in writing certain code, which is commented and documented throughout. It was also used to scaffold the base drawing. 
 
 ## External references
 
