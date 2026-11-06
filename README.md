@@ -170,6 +170,8 @@ The scene is built from tens of thousands of seeded marks (dashes, blades and da
 
 ## AI acknowledgement
 
+We used the Claude extension on VS code to brainstorm solutions, troubleshoot, and assist in writing certain code, which is commented and documented throughout. It was also used to scaffold the base drawing.
+
 ## External references
 
 - We referenced [this tutorial](https://www.deconbatch.com/2022/10/blog-post_20.html) from deconbatch for drawing organic strokes in the composition.
