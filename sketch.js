@@ -76,7 +76,7 @@ const bushSettings = {
   spacing: 0.03, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
   clumpsPerRow: 4, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
   farAlong: 1, // how far toward the vanishing point clumps reach [0–1, 1 = all the way]
-  sizeFactor: [1.2, 1.8], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
+  sizeFactor: [0.5, 1.2], // [min, max] clump height as a fraction of canvas height up close [> 0, min ≤ max]; try 0.2–1.2
   lumpFrequency: 1.4, // how many lobes the outline wobbles into [> 0, higher = more, smaller lobes]; try 0.5–3
   lumpDepth: 0.5, // how far the lobes push in/out [0–1, 0 = clean ellipse]; try 0–0.4
   marksPerClump: 1000, // dashes per clump, spread over the whole blob [whole number ≥ 0, 0 = none, higher = denser but slower]; try 80–300
