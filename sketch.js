@@ -339,7 +339,7 @@ function* sceneSteps() {
   drawStars(stars);
   snapshotStarBoxes(stars); // to check later whether anything is painted over each star
   // bushes after the ground so it doesn't cover them, before the trees so they sit in front
-  const bushes = buildBushes();
+  const bushes = yield* buildBushes(); // yields as it goes: building all ~200 clumps took ~140 ms in one step
   yield;
   for (const bush of bushes) {
     bush.draw();
@@ -1291,7 +1291,12 @@ function drawTreeLabels(placements) {
 // Bushes: overlapping blob clumps along each verge (see bushes.js)
 // ---------------------------------------------------------------------------
 // Builds the clumps (far → near) without drawing them
-function buildBushes() {
+// A generator (sceneSteps runs it with yield*): it pauses every few clumps so
+// a background repaint can spread the work over frames. Nothing else calls
+// random() between frames (see sceneSteps), so the bushes' random stream, and
+// the reset to `seed` at the end, come out exactly as when built in one go.
+function* buildBushes() {
+  const clumpsPerStep = 12; // ~8 ms of building per step
   randomSeed(seed + 1); // separate random stream for the bushes
   const settings = bushSettings;
 
@@ -1321,6 +1326,7 @@ function buildBushes() {
         // 0.65 × size) so its road-side edge, not its centre, sits at `across`:
         // the clump grows away from the lane and stays behind the tree trunks
         bushes.push(new Bush(point.x + side * size * 0.6, point.y, size));
+        if (bushes.length % clumpsPerStep === 0) yield;
       }
     }
   }

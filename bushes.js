@@ -86,15 +86,42 @@ class Bush {
   }
 
   // Native canvas blur on just this fill: p5's filter(BLUR) would blur the
-  // whole canvas, and blurring a single shape is cheap enough for ~40 clumps
+  // whole canvas.
+  // Clipped to this clump's own box (massClip): Chrome runs a canvas filter
+  // over a layer as big as the clip, so unclipped every one of the ~200 clumps
+  // blurred a whole canvas-sized layer (~15 ms each, ~3 s per repaint, which
+  // is what made frames stall while the day cycle repaints). The box reaches
+  // well past where the blur fades to nothing, so the picture is unchanged
+  // (checked pixel for pixel against the unclipped version).
   drawMass() {
+    // set before push(), so they're still set after pop(): drawMarks relies on noStroke
     noStroke();
     fill(this.colour);
+    const box = this.massClip;
+    push(); // not drawingContext.save(): see withClip (sketch.js)
+    drawingContext.beginPath();
+    drawingContext.rect(box.x, box.y, box.w, box.h);
+    drawingContext.clip();
     drawingContext.filter = `blur(${this.blur}px)`;
     beginShape();
     for (const point of this.outline) vertex(point.x, point.y);
     endShape(CLOSE);
     drawingContext.filter = "none";
+    pop();
+  }
+
+  // Box the blurred fill fits in: the outline, padded by 4× the blur radius
+  // (the blur measurably fades to zero within ~1×) plus 4 px for anti-aliasing
+  get massClip() {
+    if (!this._massClip) {
+      const pad = max(0, this.blur) * 4 + 4;
+      const xs = this.outline.map((p) => p.x);
+      const ys = this.outline.map((p) => p.y);
+      const minX = min(xs) - pad;
+      const minY = min(ys) - pad;
+      this._massClip = { x: minX, y: minY, w: max(xs) + pad - minX, h: max(ys) + pad - minY };
+    }
+    return this._massClip;
   }
 
   // rustleBushMark (user-input.js) moves the marks near the cursor; curved
