@@ -27,7 +27,8 @@ const perspective = {
   vanishingPointX: 0.8, // vanishing point x as a fraction of canvas width; pans the whole scene left/right
   //                        (lower = see more of the right verge, higher = more of the left) [0–1]; try 0.3–0.7
   roadHalfWidth: 0.35, // half the road width at the bottom edge, fraction of width [> 0]; try 0.15–0.5
-  farHalfWidth: 8, // half the road width at the vanishing point, px [≥ 0, 0 = sharp point]; try 0–30
+  farHalfWidth: 0, // half the road width at the vanishing point, px [≥ 0, 0 = sharp point]; try 0–30
+  //                  (0 so the road narrows into the horizon; anything wider ends in a flat cut-off edge there)
   compression: 0.8, // how quickly things shrink toward the horizon [> 0, 1 = even]; try 0.5–1.5
   //                   (< 1 = shrink sooner, > 1 = stay large longer then bunch at the horizon)
   curve: -0.2, // sideways bend of the far lane, moves the vanishing point [any, 0 = straight]; try -0.4–0.4
@@ -41,10 +42,14 @@ const treeSettings = {
   leavesPerBranch: [20, 30], // leaves scattered along each outer branch (all three passes combined) [whole number ≥ 0]; try 6–30
   leafDistance: 0.3, // LEAF DISTANCE/SPREAD how far leaves stray perpendicular to the branch, as a fraction of branch length [> 0]; try 0.05–0.4
   leafMarkLength: 0.1, // LEAF SIZE leaf dab length as a fraction of branch length [> 0]; try 0.05–0.25
+  // [min, max] trunk distance beyond the road edge, in `across` units [≥ 0.07, the road edge wobbles ±0.07]; try 0.08–0.3.
+  // Kept close to the road so the trees stand in front of the bushes, which start beyond them (bushSettings.baseAcross)
+  roadsideAcross: [0.08, 0.14],
 };
 
 const bushSettings = {
-  baseAcross: 0.1, // nearest clump feet, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
+  baseAcross: 0.18, // where the clumps' road-side edge starts, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
+  //                   (keep ≥ treeSettings.roadsideAcross max so bushes start behind the tree line, not under the trunks)
   acrossSpread: 0.45, // how much further out from there clumps can sit [≥ 0]; try 0–1
   spacing: 0.05, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
   clumpsPerRow: 1, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
@@ -985,6 +990,7 @@ function drawRoad() {
   endShape(CLOSE);
 
   // 2. dashes that follow the lane, sized by distance
+  const randomAlong = roadAlongSampler();
   const scatterMarks = (
     count,
     acrossMin,
@@ -995,7 +1001,7 @@ function drawRoad() {
     brightnessRange,
   ) => {
     for (let i = 0; i < count; i++) {
-      const along = pow(random(), 1.5) * 0.98;
+      const along = randomAlong();
       const across = lerp(
         leftEdge(along),
         rightEdge(along),
@@ -1019,6 +1025,49 @@ function drawRoad() {
   scatterMarks(marks(900), 0.22, 0.36, palette.track, 2, 4, 4); // left tyre track
   scatterMarks(marks(900), 0.64, 0.78, palette.track, 2, 4, 4); // right tyre track
   scatterMarks(marks(350), 0.45, 0.55, palette.ridge, 2, 4, 4); // centre ridge
+}
+
+// Returns a function giving a random `along` for one road dash, so the dashes
+// cover the road evenly all the way to the horizon. Picking `along` evenly (or
+// weighted to the front, as before) thinned them out toward the vanishing point:
+// a step of `along` there covers fewer screen pixels, but each dash shrinks faster
+// still (shorter and thinner), so less of the road got painted. Instead each step
+// is weighted by its on-screen area ÷ the area of one dash there, so every part
+// of the road gets the same coverage as the foreground. Steps below the canvas
+// (the zoom crops the near end of the lane) get none, so no dashes are wasted
+// there: the same counts as before now give the foreground about the same density.
+// Uses one random() per call, like the old pow(random(), 1.5).
+function roadAlongSampler() {
+  const steps = 200,
+    farthest = 0.98, // stop just short of the vanishing point, where dashes are sub-pixel
+    stepSize = farthest / steps,
+    totals = []; // running total of weights, for picking a step
+  let total = 0;
+  for (let i = 0; i < steps; i++) {
+    const along = i * stepSize,
+      near = lane(along, 0.5),
+      far = lane(along + stepSize, 0.5),
+      roadWidth =
+        lane(along, rightEdge(along)).x - lane(along, leftEdge(along)).x;
+    const visibleHeight = max(0, min(near.y, height) - far.y); // 0 once the step is below the canvas
+    // average dash in scatterMarks: length × 0.95 (mean of its random(0.6, 1.3)) × weight
+    const dashArea =
+      lerp(2, 24, near.scale) *
+      0.95 *
+      lerp(...roadSettings.markWeight, near.scale);
+    total += (roadWidth * visibleHeight) / dashArea;
+    totals.push(total);
+  }
+  return () => {
+    const target = random() * total;
+    let i = 0;
+    while (totals[i] < target && i < steps - 1) i++;
+    // reuse the leftover of the same random number for the spot inside the step
+    const stepStart = i > 0 ? totals[i - 1] : 0,
+      stepWeight = totals[i] - stepStart;
+    const inside = stepWeight > 0 ? (target - stepStart) / stepWeight : 0;
+    return (i + inside) * stepSize;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,7 +1161,8 @@ function buildTrees() {
     if (side === -1) {
       for (let i = 0; i < leftTrees.length; i++) {
         const along = leftTrees[i] + random(0);
-        const across = side < 0 ? -0.12 - random(0.1) : 1.12 + random(0.3);
+        const outward = random(...treeSettings.roadsideAcross);
+        const across = side < 0 ? -outward : 1 + outward;
         const point = lane(along, across);
         const treeHeight =
           point.scale * height * random(...treeSettings.sizeFactor);
@@ -1124,7 +1174,8 @@ function buildTrees() {
     } else if (side === 1) {
       for (let i = 0; i < rightTrees.length; i++) {
         const along = rightTrees[i] + random(0);
-        const across = side < 0 ? -0.12 - random(0.3) : 1.12 + random(0.3);
+        const outward = random(...treeSettings.roadsideAcross);
+        const across = side < 0 ? -outward : 1 + outward;
         const point = lane(along, across);
         const treeHeight =
           point.scale * height * random(...treeSettings.sizeFactor);
@@ -1196,9 +1247,10 @@ function buildBushes() {
           1,
         );
         if (random() < 0.5) size *= 1 + edgeness * random(0.2, 0.5);
-        // shift outward by about half the clump's width so it grows away
-        // from the lane instead of spilling over the road
-        bushes.push(new Bush(point.x + side * size * 0.3, point.y, size));
+        // shift outward by the clump's half-width (Bush radiusX is up to
+        // 0.65 × size) so its road-side edge, not its centre, sits at `across`:
+        // the clump grows away from the lane and stays behind the tree trunks
+        bushes.push(new Bush(point.x + side * size * 0.6, point.y, size));
       }
     }
   }
