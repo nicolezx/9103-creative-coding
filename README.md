@@ -86,13 +86,17 @@ and `display()` methods handle drag, gravity, spin and fading.
 
 ## Techniques
 
-- **time of day:** a 24-hour cycle compressed into 60 seconds (or the real clock) blends between Night, Dusk, Golden Hour and Day colour keyframes; stars fade in at night and twinkle using `noise()` over time
-- **colour:** all colours are stored as HSB and blended in OKLab, so transitions between times of day and weather don't pass through muddy greys; weather is layered on top of the time-of-day palette as an offset, sampled from three paintings in the series (dry, overcast, wet)
-- **weather:** precomputed Perlin `noise()` arrays act as a timeline for humidity and temperature; rain builds up `moisture`, which dries out faster in daylight, so puddles linger after a shower
-- **rain:** wavering bezier raindrops splash on the road and leave wet patches, drawn onto a separate `createGraphics()` layer and multiplied over the road (`blendMode(MULTIPLY)`) so the road texture shows through; one deeper puddle grows and dries with `moisture`
-- **performance:** drawing the full scene takes ~250 ms (~90k marks), so it's cached in offscreen `createGraphics()` buffers and repainted in the background using a generator function (`function*` / `yield`) that spreads the work over several frames, then cross-fades in
-- **interaction:** hovering over tree leaves or bushes makes nearby marks sway, driven by `noise()` so neighbouring leaves move together, and only that small patch of the canvas is redrawn; clicking a tree or bush sends out a burst of leaf pieces with drag and gravity
-- a HUD built in HTML/CSS shows the time, temperature, humidity, moisture and current conditions, updated from the sketch each frame
+The scene is built from tens of thousands of seeded marks (dashes, blades and dabs) placed in perspective, drawn once and cached as a picture. Time of day and weather never draw anything themselves: they only change the shared `palette`, and when the colours drift far enough the cached picture is repainted in the background and cross-faded in. Rain and user interaction are drawn live on top of the cached picture each frame, and hovering redraws only the small patch of leaves that moves.
+
+#### Scene
+
+| Technique                                  | Function                                                                                                                                   | Why it was needed                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| HSB colour, blended in OKLab               | Colours are stored as HSB; time-of-day keyframes and weather palettes are mixed in OKLab                                                   | Blending in HSB or RGB passes through muddy greys or wraps hues the wrong way; OKLab keeps transitions smooth          |
+| Weather as a palette offset                | Rain blends three palettes sampled from the series (dry, overcast, wet) and adds the difference from dry on top of the time-of-day colours | One palette per weather × time combination would be too many to tune; an offset lets the two layers work independently |
+| Offscreen `createGraphics()` buffers       | The whole scene is drawn once into a buffer and copied to the canvas each frame                                                            | Drawing the scene takes ~250 ms (~90k marks), far too slow to redraw every frame                                       |
+| Generator function (`function*` / `yield`) | `sceneSteps()` repaints the scene in the background, a few milliseconds per frame                                                          | A repaint in one go froze the animation; spreading it over frames keeps it running                                     |
+| Cross-fade between buffers                 | The old picture fades out as the newly repainted one takes over                                                                            | Colours ease through the day cycle instead of jumping each time the scene repaints                                     |
 
 #### Base drawing
 
@@ -215,7 +219,7 @@ and `display()` methods handle drag, gravity, spin and fading.
 
 ## AI acknowledgement
 
-We used the Claude extension on VS code to brainstorm solutions, troubleshoot, and assist in writing certain code, which is commented and documented throughout. It was also used to scaffold the base drawing. 
+We used the Claude extension on VS code to brainstorm solutions, troubleshoot, and assist in writing certain code, which is commented and documented throughout. It was also used to scaffold the base drawing.
 
 ## External references
 
