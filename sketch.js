@@ -1096,10 +1096,10 @@ function drawRoad() {
     }
   };
 
-  scatterMarks(marks(1800), 0, 1, palette.road, 8, 8, 4); // general surface
-  scatterMarks(marks(900), 0.22, 0.36, palette.track, 2, 4, 4); // left tyre track
-  scatterMarks(marks(900), 0.64, 0.78, palette.track, 2, 4, 4); // right tyre track
-  scatterMarks(marks(350), 0.45, 0.55, palette.ridge, 2, 4, 4); // centre ridge
+  scatterMarks(marks(1800), 0, 1, palette.road, 2, 2, 4); // general surface
+  scatterMarks(marks(900), 0.22, 0.36, palette.track, 2, 2, 4); // left tyre track
+  scatterMarks(marks(900), 0.64, 0.78, palette.track, 2, 2, 4); // right tyre track
+  scatterMarks(marks(350), 0.45, 0.55, palette.ridge, 2, 2, 4); // centre ridge
 }
 
 // Returns a function giving a random `along` for one road dash, so the dashes
