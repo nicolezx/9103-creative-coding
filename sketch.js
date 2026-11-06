@@ -42,9 +42,11 @@ const treeSettings = {
   leavesPerBranch: [20, 30], // leaves scattered along each outer branch (all three passes combined) [whole number ≥ 0]; try 6–30
   leafDistance: 0.3, // LEAF DISTANCE/SPREAD how far leaves stray perpendicular to the branch, as a fraction of branch length [> 0]; try 0.05–0.4
   leafMarkLength: 0.1, // LEAF SIZE leaf dab length as a fraction of branch length [> 0]; try 0.05–0.25
-  // [min, max] trunk distance beyond the road edge, in `across` units [≥ 0.07, the road edge wobbles ±0.07]; try 0.08–0.3.
-  // Kept close to the road so the trees stand in front of the bushes, which start beyond them (bushSettings.baseAcross)
-  roadsideAcross: [0.08, 0.14],
+  // [min, max] trunk distance beyond each road edge, in `across` units [≥ 0.07, the road edge wobbles ±0.07]; try 0.08–0.45.
+  // Left trees are kept close to the road so they stand in front of the bushes, which start beyond them
+  // (bushSettings.baseAcross). Right trees spread further back into the verge, so that side reads less like a wall.
+  roadsideAcrossLeft: [0.08, 0.14],
+  roadsideAcrossRight: [0.12, 0.42],
   // left side only: how far past the left edge a trunk base can sit and still be drawn, as a fraction of
   // that tree's height [≥ 0, 0 = base must be on-canvas horizontally]; try 0.2–0.8. Bases below the canvas are
   // always kept as long as the tree's top reaches into the frame
@@ -71,7 +73,7 @@ const frontGrassSettings = {
 
 const bushSettings = {
   baseAcross: 0.1, // where the clumps' road-side edge starts, in `across` units beyond each road edge [≥ 0, < 0 = on the road]; try 0–0.5
-  //                   (keep ≥ treeSettings.roadsideAcross max so bushes start behind the tree line, not under the trunks)
+  //                   (keep ≥ treeSettings.roadsideAcrossLeft max so bushes start behind the tree line, not under the trunks)
   acrossSpread: 0.45, // how much further out from there clumps can sit [≥ 0]; try 0–1
   spacing: 0.03, // gap between rows of clumps, in `along` units [> 0, smaller = more clumps, slower]; try 0.02–0.15
   clumpsPerRow: 4, // overlapping clumps at each step, so the verge fills up [whole number ≥ 1]; try 1–4
@@ -134,7 +136,9 @@ const cacheSettings = {
   //                     try 3–12 (lower = smoother time-of-day changes, more background work)
   frameBudgetMs: 12, // ms per frame spent on a background repaint [> 0]; try 6–20
   //                    (higher = colours catch up sooner, but frames get slower while repainting)
-  fadeFrames: 8, // frames to cross-fade a finished repaint in [whole number ≥ 1]; try 4–16
+  fadeFrames: 8, // shortest cross-fade of a finished repaint, in frames [whole number ≥ 1]; try 4–16.
+  //                Each fade normally lasts as long as the repaint took (the next one is being
+  //                painted meanwhile), so colours keep moving instead of stepping every repaint
   maxPixelDensity: 2, // cap on backing pixels per design pixel (sharpDensity in utils.js) [> 0];
   //                     try 1.5–3 (higher = crisper on big Retina screens, but cost grows with its square)
   paintedOverThreshold: 4, // summed RGB difference (0–765) above which a pixel counts as covered by a bush/tree,
@@ -159,6 +163,8 @@ let rebuildPalette = null; // palette snapshot the pending repaint started with
 let cachedPaletteLevels = null; // palette snapshot the current picture was painted with
 let fadeFrom = null; // previous picture, fading out over the new one
 let fadeStart = 0; // frameCount when the fade began
+let fadeLength = 1; // frames the current fade lasts (as long as the last repaint took)
+let rebuildStart = 0; // frameCount when the pending repaint began
 let sceneDirty = true; // repaint immediately, in one go (first frame, seed / debug / resize changes)
 let sceneBushes = []; // Bush objects in draw order, kept for partial redraws
 let sceneTrees = []; // Tree objects in draw order
@@ -292,7 +298,9 @@ function draw() {
     stepRebuild(Infinity);
     fadeFrom = null;
     sceneDirty = false;
-  } else if (!rebuild && !fadeFrom && paletteDrifted()) {
+  } else if (!rebuild && paletteDrifted()) {
+    // also while a fade is running: the fade picture is its own buffer
+    // (buffers.fade), so the next repaint can start straight away
     startRebuild();
   }
   if (rebuild) stepRebuild(cacheSettings.frameBudgetMs);
@@ -497,6 +505,7 @@ function startRebuild() {
   ensureBuffers();
   rebuild = sceneSteps();
   rebuildPalette = paletteSnapshot();
+  rebuildStart = frameCount;
 }
 
 // Run the background repaint for up to `budgetMs`, drawing into the pending
@@ -539,9 +548,26 @@ function drawInto(buffer, drawing) {
 // Swap the finished picture on screen and start fading the old one out
 function finishRebuild({ stars, bushes, trees, placements }) {
   const { current, pending } = buffers;
-  buffers = { ...buffers, current: pending, pending: current }; // swap; keep the patch buffer
-  fadeFrom = current.scene;
+  // What's on screen right now becomes the picture that fades out: the
+  // outgoing picture drawn over the fade buffer at the fade's progress (all
+  // of it if no fade is running), so a repaint finishing mid-fade doesn't jump.
+  // Kept in its own buffer because the next repaint paints over `current`.
+  const shown = fadeFrom ? fadeProgress() : 1;
+  if (shown >= 1) copyBuffer(current.scene, buffers.fade);
+  else {
+    const context = buffers.fade.drawingContext;
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = shown;
+    context.drawImage(current.scene.elt, 0, 0);
+    context.restore();
+  }
+  buffers = { ...buffers, current: pending, pending: current }; // swap; keep the patch + fade buffers
+  fadeFrom = buffers.fade;
   fadeStart = frameCount;
+  // fade over as long as this repaint took: about when it ends, the next one
+  // (started straight away if colours are still drifting) is ready
+  fadeLength = max(cacheSettings.fadeFrames, frameCount - rebuildStart);
   sceneStars = stars;
   sceneBushes = bushes;
   sceneTrees = trees;
@@ -555,7 +581,7 @@ function finishRebuild({ stars, bushes, trees, placements }) {
 // The previous picture, fading out over everything drawn so far this frame
 function drawFadingPicture() {
   if (!fadeFrom) return;
-  const t = (frameCount - fadeStart) / cacheSettings.fadeFrames;
+  const t = fadeProgress();
   if (t >= 1) {
     fadeFrom = null;
     return;
@@ -563,6 +589,11 @@ function drawFadingPicture() {
   drawingContext.globalAlpha = 1 - t;
   drawBuffer(fadeFrom);
   drawingContext.globalAlpha = 1;
+}
+
+// 0 (fade just started) → 1 (new picture fully shown)
+function fadeProgress() {
+  return min(1, (frameCount - fadeStart) / fadeLength);
 }
 
 // Redraw just `area`: a circle ({ centreX, centreY, radius } + its bounding
@@ -663,7 +694,7 @@ function paletteSnapshot() {
   );
 }
 
-// (Re)make the five offscreen buffers (2 × scene + base, 1 patch) when missing or the pixel density changed
+// (Re)make the six offscreen buffers (2 × scene + base, 1 patch, 1 fade) when missing or the pixel density changed
 function ensureBuffers() {
   if (buffers && buffers.current.scene.pixelDensity() === pixelDensity())
     return;
@@ -673,6 +704,7 @@ function ensureBuffers() {
       set.base.remove();
     }
     buffers.patch.remove();
+    buffers.fade.remove();
   }
   const make = () => {
     const g = createGraphics(width, height);
@@ -685,6 +717,7 @@ function ensureBuffers() {
     current: { scene: make(), base: make() },
     pending: { scene: make(), base: make() },
     patch: make(), // where the hover patch is painted before it's copied to the canvas
+    fade: make(), // the previous picture while it fades out (finishRebuild)
   };
   fadeFrom = null;
 }
@@ -1195,15 +1228,15 @@ function buildTrees() {
   const placements = [];
   const leftTrees = [0.04, 0.2, 0.36, 0.4, 0.52, 0.65, 0.8, 0.9]; // `along` positions on the lane
   const rightTrees = [
-    0.02, 0.07, 0.18, 0.22, 0.35, 0.55, 0.7, 0.74, 0.77, 0.82, 0.85, 0.89, 0.91,
-    0.915, 0.94,
+    0.02, 0.07, 0.18, 0.22, 0.35, 0.55, 0.7, 0.74, 0.77, 0.82, 0.85, 0.89,
+    0.905, 0.91, 0.94,
   ]; // `along` positions on the lane
 
   for (const side of [-1, 1]) {
     if (side === -1) {
       for (let i = 0; i < leftTrees.length; i++) {
         const along = leftTrees[i] + random(0);
-        const outward = random(...treeSettings.roadsideAcross);
+        const outward = random(...treeSettings.roadsideAcrossLeft);
         const across = side < 0 ? -outward : 1 + outward;
         const point = lane(along, across);
         const treeHeight =
@@ -1222,7 +1255,7 @@ function buildTrees() {
     } else if (side === 1) {
       for (let i = 0; i < rightTrees.length; i++) {
         const along = rightTrees[i] + random(0);
-        const outward = random(...treeSettings.roadsideAcross);
+        const outward = random(...treeSettings.roadsideAcrossRight);
         const across = side < 0 ? -outward : 1 + outward;
         const point = lane(along, across);
         const treeHeight =
