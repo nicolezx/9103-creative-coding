@@ -26,8 +26,9 @@ canvas {
 .time-display {
   position: absolute;
   bottom: 0;
-  /* left: 0; */
-  width: 20vw;
+  left: 0;
+  right: 0;
+  /* width: 20vw; */
   padding: 0.5rem;
   pointer-events: none;
   z-index: 1;
@@ -39,23 +40,65 @@ canvas {
   /* mix-blend-mode: hue; */
 }
 
+.time-display::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: calc(100% + 50%);
+  z-index: -1;
+  background: #000000;
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.4) 1%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+
+/* .hud-label, */
+.meter {
+  display: none;
+}
+
 .display-inner {
   display: flex;
-  justify-content: space-between;
-  flex-direction: column;
+  /* justify-content: space-between; */
+  /* flex-direction: column; */
   font-variant-numeric: tabular-nums;
   padding: 1rem;
   gap: 1.5rem;
 }
 
+.label-group:has(.humidity),
+.label-group:has(.moisture),
+.label-group:has(.conditions) {
+  display: none;
+}
+
+.timestamp {
+  min-width: 5ch;
+}
+
+.temperature {
+  min-width: 4ch;
+}
+
+.humidity,
+.moisture {
+  min-width: 2ch;
+}
+
 div.label-group {
-  flex: 1;
+  flex-shrink: 0;
+  /* flex: 1; */
   /* display: flex; */
   /* gap: 0.25rem; */
 }
 
 .hud-label {
-  text-transform: uppercase;
+  /* text-transform: uppercase; */
 }
 
 /* Progress meter under a label group (status only, not interactive).
