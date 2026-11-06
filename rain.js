@@ -20,11 +20,16 @@
 //             puddle spot, so one deep puddle forms. The spot moves at most
 //             once a day, at a random time, and only once the lane has dried.
 //
-// Ripples and patches are wobbly blobs (blob()), not perfect ellipses.
+// Ripples and patches are wobbly blobs (blobPath()), not perfect ellipses.
 // Patches are drawn into their own layer (puddleLayer), which is then laid
 // over the scene with MULTIPLY: the road's marks and colours show through the
 // water, and however many patches overlap, the deepest the puddle can get is
 // the ground × the wet colour, never a flat opaque fill.
+//
+// Performance: this runs every frame with up to maxPatches blobs, so blobs
+// are plain canvas paths (not p5 curveVertex shapes), and the layer is only
+// cleared and laid over the scene inside the box the patches cover
+// (wetPatchBox), not the whole canvas.
 //
 // Randomness uses Math.random, never p5's random(): the cached scene relies on
 // p5's random() sequence being untouched between frames (sketch.js sceneSteps).
@@ -93,6 +98,7 @@ let dropsOwed = 0; // fractional drops carried between frames, so light drizzle 
 const rutCentres = [0.29, 0.71];
 
 let puddleLayer = null; // p5.Graphics the wet patches are drawn into (see top)
+let puddleLayerBox = null; // area of puddleLayer drawn on last frame (to clear), or null
 let puddleSpot = null; // { along, across } of the puddle (pickPuddleSpot)
 let puddleMoveTime = Math.random(); // today's time to move the spot (day fraction)
 let puddleMoveDue = false; // move time passed, waiting for the lane to dry
@@ -128,24 +134,74 @@ function updateRain() {
     wetPatches.splice(0, wetPatches.length - rainSettings.maxPatches);
 
   // ground first (puddle, then ripples), drops on top
-  if (!puddleLayer || puddleLayer.width !== width || puddleLayer.height !== height) {
-    puddleLayer = createGraphics(width, height);
-    puddleLayer.colorMode(HSB, 360, 100, 100, 1);
-  }
-  puddleLayer.clear();
-  puddleLayer.noStroke();
-  for (const patch of wetPatches) patch.draw(wetColour, puddleLayer);
-
+  drawWetPatches(wetColour);
   push();
-  if (wetPatches.length) {
-    blendMode(MULTIPLY);
-    image(puddleLayer, 0, 0);
-    blendMode(BLEND);
-  }
   noFill();
   for (const splash of splashes) splash.draw(dropColour);
   for (const drop of raindrops) drop.draw(dropColour);
   pop();
+}
+
+// Paint the wet patches into puddleLayer and lay them over the canvas with
+// MULTIPLY, exactly as a full-canvas clear + image() would, but only inside
+// the box the patches cover: clearing and compositing the whole canvas every
+// frame was most of the rain's cost.
+function drawWetPatches(wetColour) {
+  if (!puddleLayer || puddleLayer.width !== width || puddleLayer.height !== height) {
+    puddleLayer = createGraphics(width, height);
+    puddleLayer.colorMode(HSB, 360, 100, 100, 1);
+    puddleLayerBox = null;
+  }
+  const box = wetPatchBox();
+  // clear what was drawn last frame (patches shrink and vanish, so that box
+  // can reach past this frame's)
+  if (puddleLayerBox)
+    puddleLayer.drawingContext.clearRect(puddleLayerBox.x, puddleLayerBox.y, puddleLayerBox.w, puddleLayerBox.h);
+  puddleLayerBox = box;
+  if (!box) return;
+
+  puddleLayer.noStroke();
+  for (const patch of wetPatches) patch.draw(wetColour, puddleLayer);
+
+  // the same blendMode + image() as drawing the whole layer, clipped to the box
+  drawingContext.save();
+  drawingContext.beginPath();
+  drawingContext.rect(box.x, box.y, box.w, box.h);
+  drawingContext.clip();
+  blendMode(MULTIPLY);
+  image(puddleLayer, 0, 0);
+  blendMode(BLEND);
+  drawingContext.restore();
+}
+
+// Box (scene px) holding every wet patch at its current size, or null when
+// there are none. Padded and snapped to whole pixels on both the canvas and
+// puddleLayer, so its edges never cut through anything that was drawn.
+function wetPatchBox() {
+  if (wetPatches.length === 0) return null;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  // widest a blob reaches past its radius: its wobble, plus a little for the
+  // curve overshooting its points
+  const reach = (1 + rainSettings.blobWobble) * 1.15;
+  for (const patch of wetPatches) {
+    const size = patch.currentSize();
+    const halfW = (size / 2) * reach;
+    const halfH = ((size * 0.3) / 2) * reach;
+    left = Math.min(left, patch.x - halfW);
+    right = Math.max(right, patch.x + halfW);
+    top = Math.min(top, patch.y - halfH);
+    bottom = Math.max(bottom, patch.y + halfH);
+  }
+  const pad = 4; // px, for anti-aliasing and the layer being scaled onto the canvas
+  const x = Math.max(0, Math.floor(left - pad));
+  const y = Math.max(0, Math.floor(top - pad));
+  const r = Math.min(width, Math.ceil(right + pad));
+  const b = Math.min(height, Math.ceil(bottom + pad));
+  if (r <= x || b <= y) return null;
+  return { x, y, w: r - x, h: b - y };
 }
 
 // A drop has hit the ground: ripple + wet patch, if it's on the lane
@@ -222,7 +278,7 @@ function randomGroundPoint() {
   };
 }
 
-// Random outline radii for blob(), fixed per object so it doesn't morph
+// Random outline radii for blobPath(), fixed per object so it doesn't morph
 function blobRadii() {
   const radii = [];
   for (let i = 0; i < rainSettings.blobPoints; i++)
@@ -230,22 +286,34 @@ function blobRadii() {
   return radii;
 }
 
-// Wobbly closed oval through `radii` (one per outline point), w × h across.
-// Catmull-Rom curve, so no corners; uses the current fill / stroke of `g`
-// (the main canvas, or a p5.Graphics).
-function blob(x, y, w, h, radii, g = window) {
+// Wobbly closed oval through `radii` (one per outline point), w × h across,
+// as a new path on canvas `context`; the caller fills or strokes it.
+// Catmull-Rom curve (the same curve p5's curveVertex draws, as bezier
+// segments), so no corners. Plain canvas calls rather than p5 shapes: this
+// runs for hundreds of patches every frame.
+function blobPath(context, x, y, w, h, radii) {
   const count = radii.length;
-  g.beginShape();
-  // the curve needs one extra point before and two after to close smoothly
-  for (let i = -1; i <= count + 1; i++) {
+  const pointX = (i) => {
     const index = (i + count) % count;
-    const angle = (TWO_PI * index) / count;
-    g.curveVertex(
-      x + Math.cos(angle) * (w / 2) * radii[index],
-      y + Math.sin(angle) * (h / 2) * radii[index],
+    return x + Math.cos((TWO_PI * index) / count) * (w / 2) * radii[index];
+  };
+  const pointY = (i) => {
+    const index = (i + count) % count;
+    return y + Math.sin((TWO_PI * index) / count) * (h / 2) * radii[index];
+  };
+  context.beginPath();
+  context.moveTo(pointX(0), pointY(0));
+  // segment i → i+1, its control points from the neighbours either side
+  for (let i = 0; i < count; i++) {
+    context.bezierCurveTo(
+      pointX(i) + (pointX(i + 1) - pointX(i - 1)) / 6,
+      pointY(i) + (pointY(i + 1) - pointY(i - 1)) / 6,
+      pointX(i + 1) - (pointX(i + 2) - pointX(i)) / 6,
+      pointY(i + 1) - (pointY(i + 2) - pointY(i)) / 6,
+      pointX(i + 1),
+      pointY(i + 1),
     );
   }
-  g.endShape();
 }
 
 class Raindrop {
@@ -313,7 +381,8 @@ class Splash {
     const w = lerp(...rainSettings.splashWidth, this.depth);
     // oblong ripple spreading out from where the drop hit
     const rippleWidth = w * (0.4 + 0.6 * progress);
-    blob(this.x, this.y, rippleWidth, rippleWidth * rainSettings.splashFlatten, this.radii);
+    blobPath(drawingContext, this.x, this.y, rippleWidth, rippleWidth * rainSettings.splashFlatten, this.radii);
+    drawingContext.stroke(); // stroke() / strokeWeight() above set the canvas's stroke style
   }
 }
 
@@ -397,11 +466,17 @@ class WetPatch {
     if (this.alpha <= 0) this.done = true;
   }
 
+  // Size right now: read at draw time so existing patches spread / shrink with moisture
+  currentSize() {
+    return this.size * patchGrowthAt(this.inPuddle ? puddleMoisture() : weather.moisture);
+  }
+
+  // `g`: puddleLayer. fill() sets the colour (with this patch's opacity) on
+  // its canvas; the blob itself is a plain canvas path
   draw([h, s, b], g) {
     g.fill(h, s, b, this.alpha);
-    // read at draw time so existing patches spread / shrink with moisture
-    const size =
-      this.size * patchGrowthAt(this.inPuddle ? puddleMoisture() : weather.moisture);
-    blob(this.x, this.y, size, size * 0.3, this.radii, g);
+    const size = this.currentSize();
+    blobPath(g.drawingContext, this.x, this.y, size, size * 0.3, this.radii);
+    g.drawingContext.fill();
   }
 }

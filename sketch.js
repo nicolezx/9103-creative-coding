@@ -108,6 +108,8 @@ const cacheSettings = {
   frameBudgetMs: 12, // ms per frame spent on a background repaint [> 0]; try 6–20
   //                    (higher = colours catch up sooner, but frames get slower while repainting)
   fadeFrames: 8, // frames to cross-fade a finished repaint in [whole number ≥ 1]; try 4–16
+  maxPixelDensity: 2, // cap on backing pixels per design pixel (sharpDensity in utils.js) [> 0];
+  //                     try 1.5–3 (higher = crisper on big Retina screens, but cost grows with its square)
   paintedOverThreshold: 4, // summed RGB difference (0–765) above which a pixel counts as covered by a bush/tree,
   //                          for clicks (isPaintedOverBase) [≥ 0]; try 2–10 (just above anti-aliasing noise)
 };
